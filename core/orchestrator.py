@@ -10,7 +10,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional, Type
+from typing import Dict, List, Optional, Type
 
 from config.settings import ENABLED_MODULES, SCAN_TIMEOUT_PER_MODULE, RL_REWARD_MAP
 from core.Hunter_brain import AIBrain
@@ -510,6 +510,7 @@ class Orchestrator:
             state.log_thought("No WAF detected")
 
         self.target = await Crawler(self._client).crawl(self.target)
+        # IMPORTANT: sync state.target so scanners see discovered_params/urls
         state.target = self.target
         state.log_thought(f"Crawled {len(self.target.discovered_urls)} URLs")
         self._tui_thought(f"Crawled {len(self.target.discovered_urls)} URLs, "
@@ -567,6 +568,13 @@ class Orchestrator:
                 state.log_thought(
                     f"Policy: filtered {before - len(state.modules_pending)} disabled modules"
                 )
+
+        if not state.target.discovered_params:
+            logger.warning(
+                "No discovered params — injection scanners will have no targets. "
+                "Consider adding a fallback URL with a dummy parameter."
+            )
+            state.log_thought("WARNING: 0 discovered params — injection scanners may return nothing")
 
         scanner_pairs = [(n, load_scanner(n)) for n in state.modules_pending]
         scanner_pairs = [(n, c) for n, c in scanner_pairs if c]
@@ -730,7 +738,7 @@ class Orchestrator:
             return min(finding.confidence, 1.0)
 
         # Check VALIDATION_RULES
-        from core.ai_brain import VALIDATION_RULES
+        from core.Hunter_brain import VALIDATION_RULES
         rules = VALIDATION_RULES.get(finding.vuln_type)
         if rules:
             base = rules["base_confidence"] / 100.0  # convert 0-100 → 0.0-1.0
