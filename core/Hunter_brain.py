@@ -361,7 +361,7 @@ VALIDATION_RULES = {
     },
     "command_injection_time": {
         "base_confidence": 80,
-        "confirmed_if": lambda f: "delay" in f.evidence.lower() or "sleep" in (f.payload or "").lower(),
+        "confirmed_if": lambda f: "time-based" in f.evidence.lower() or "delayed" in f.evidence.lower(),
         "severity": "critical",
     },
     "command_injection_output": {
