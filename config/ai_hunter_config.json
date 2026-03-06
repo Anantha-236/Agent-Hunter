@@ -1,0 +1,227 @@
+{
+  "ai_hunter_config": {
+    "version": "1.0.0",
+    "project": "Autonomous Agentic-AI Hunter",
+
+    "ollama": {
+      "base_url": "http://localhost:11434",
+      "endpoints": {
+        "health_check":     "/",
+        "list_models":      "/api/tags",
+        "show_model_info":  "/api/show",
+        "generate":         "/api/generate",
+        "chat":             "/api/chat",
+        "embeddings":       "/api/embeddings",
+        "pull_model":       "/api/pull",
+        "delete_model":     "/api/delete",
+        "running_models":   "/api/ps"
+      },
+      "models": {
+        "primary":   "llama3:8b",
+        "fallback":  "mistral:7b",
+        "embedding": "nomic-embed-text"
+      },
+      "request_defaults": {
+        "stream": false,
+        "options": {
+          "temperature": 0.2,
+          "top_p": 0.9,
+          "top_k": 40,
+          "num_ctx": 65536,
+          "num_predict": 1024,
+          "repeat_penalty": 1.1
+        }
+      },
+      "timeouts": {
+        "connection_timeout_sec": 10,
+        "read_timeout_sec": 180,
+        "health_check_timeout_sec": 5
+      }
+    },
+
+    "hackerone_api": {
+      "base_url": "https://api.hackerone.com/v1",
+      "auth": {
+        "type": "basic",
+        "env_username": "Agent-A",
+        "env_api_token": "NIVXyRjhplsOvH6YBHFVUZw60jxNIG9dDUR+avXGRw4="
+      },
+      "endpoints": {
+        "me":                    "/me",
+        "programs_list":         "/me/programs",
+        "program_detail":        "/programs/{handle}",
+        "program_policy":        "/programs/{handle}/policy",
+        "in_scope_assets":       "/programs/{handle}/structured_scopes",
+        "submit_report":         "/reports",
+        "get_report":            "/reports/{report_id}",
+        "list_my_reports":       "/me/reports",
+        "report_comments":       "/reports/{report_id}/activities",
+        "add_comment":           "/reports/{report_id}/activities",
+        "hacktivity_public":     "/hacktivity",
+        "weaknesses_list":       "/weaknesses",
+        "update_report_state":   "/reports/{report_id}"
+      },
+      "request_headers": {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "AI-Hunter-Agent/1.0"
+      },
+      "report_template": {
+        "data": {
+          "type": "report",
+          "attributes": {
+            "team_handle": "{{PROGRAM_HANDLE}}",
+            "title": "{{VULN_TITLE}}",
+            "vulnerability_information": "{{DETAILED_DESCRIPTION}}",
+            "severity_rating": "{{SEVERITY}}",
+            "weakness_id": "{{CWE_ID}}",
+            "impact": "{{BUSINESS_IMPACT}}",
+            "proof_of_concept": "{{STEPS_TO_REPRODUCE}}"
+          }
+        }
+      },
+      "severity_cvss_map": {
+        "none":     [0.0, 0.0],
+        "low":      [0.1, 3.9],
+        "medium":   [4.0, 6.9],
+        "high":     [7.0, 8.9],
+        "critical": [9.0, 10.0]
+      }
+    },
+
+    "agent_pipeline": {
+      "phases": {
+        "0_pre_engagement": {
+          "description": "Pre-engagement safety gate — policy enforcement",
+          "tools": ["pre_engagement_gate", "bbp_policy"],
+          "ollama_task": "none",
+          "prompt_template": "none"
+        },
+        "1_recon": {
+          "description": "Target enumeration and asset discovery",
+          "tools": ["crawler", "fingerprinter", "waf_engine"],
+          "ollama_task": "Analyze recon output and prioritize attack surface",
+          "endpoint": "/api/chat",
+          "prompt_template": "Given this recon data: {{RECON_DATA}}\nIdentify high-value targets and potential vulnerability entry points. Output JSON."
+        },
+        "2_strategy": {
+          "description": "AI-powered scan strategy and module prioritization",
+          "tools": ["ai_brain", "rule_engine", "memory"],
+          "ollama_task": "Analyze tech stack and recommend scanning priority",
+          "endpoint": "/api/chat",
+          "prompt_template": "Tech stack: {{TECHNOLOGIES}}\nURLs: {{URL_COUNT}}\nPrevious results: {{MEMORY_CTX}}\nPrioritize scanner modules. Output JSON."
+        },
+        "3_scanning": {
+          "description": "Parallel vulnerability scanning with 17 scanner modules",
+          "tools": ["sql_injection", "xss_scanner", "ssrf", "ssti", "command_injection",
+                    "xxe_scanner", "crlf_injection", "graphql_scanner",
+                    "auth_scanner", "csrf_scanner", "race_condition", "idor_scanner",
+                    "path_traversal", "misconfig_scanner", "host_header",
+                    "open_redirect", "subdomain_takeover"],
+          "ollama_task": "Learn from scan results for future strategy",
+          "endpoint": "/api/generate"
+        },
+        "4_validation": {
+          "description": "AI-powered finding validation and false positive filtering",
+          "tools": ["ai_brain", "rule_engine"],
+          "ollama_task": "Validate findings and generate PoC steps",
+          "endpoint": "/api/chat",
+          "prompt_template": "Validate this finding: {{FINDING_JSON}}\nIs this a true positive? Generate PoC steps if confirmed."
+        },
+        "5_reporting": {
+          "description": "Generate reports and optionally submit to HackerOne",
+          "tools": ["reporter", "hackerone_report"],
+          "ollama_task": "Write professional bug report",
+          "endpoint": "/api/chat",
+          "prompt_template": "Write a professional HackerOne bug bounty report for:\nVuln: {{VULN_TYPE}}\nTarget: {{URL}}\nPoC: {{POC_STEPS}}\nImpact: {{IMPACT}}"
+        }
+      }
+    },
+
+    "rl_config": {
+      "algorithm": "custom_reward_engine",
+      "reward_function": {
+        "successful_exploit":           100,
+        "confirmed_finding":             50,
+        "duplicate_finding":            -30,
+        "out_of_scope_action":          -50,
+        "false_positive_submitted":     -20,
+        "new_url_discovered":             5,
+        "high_severity_found":           40,
+        "critical_severity_found":       80,
+        "no_progress_action":            -5,
+        "incorrect_exploit_attempt":    -10,
+        "recon_depth_bonus":             10
+      }
+    },
+
+    "rules_engine": {
+      "description": "Secondary decision layer when Ollama fails",
+      "rules": [
+        {"id": "R001", "name": "SQLi Detection",        "condition": "response_contains(['SQL syntax', 'mysql_fetch', 'ORA-', 'SQLSTATE'])", "severity": "high"},
+        {"id": "R002", "name": "XSS Detection",         "condition": "reflected_input_in_response AND no_encoding", "severity": "medium"},
+        {"id": "R003", "name": "IDOR Detection",        "condition": "sequential_id_in_url AND accessible_without_auth", "severity": "high"},
+        {"id": "R004", "name": "Sensitive File Exposure","condition": "url_matches(['.env', '.git/config', 'backup.zip', 'db.sql'])", "severity": "critical"},
+        {"id": "R005", "name": "Subdomain Takeover",    "condition": "cname_points_to_unclaimed_service", "severity": "high"},
+        {"id": "R006", "name": "Rate Limiting Bypass",  "condition": "same_endpoint_hit > 100 AND no_block_received", "severity": "medium"}
+      ],
+      "fallback_priority": "rules_engine_activates_when_ollama_timeout OR ollama_error"
+    },
+
+    "error_handling": {
+      "ollama_failures": {
+        "connection_refused": {
+          "action": "switch_to_rules_engine",
+          "retry_after_sec": 30,
+          "alert": "Ollama service down - run: ollama serve"
+        },
+        "timeout": {
+          "action": "reduce_context_and_retry",
+          "max_retries": 3,
+          "fallback": "rules_engine"
+        },
+        "model_not_found": {
+          "action": "pull_model_automatically",
+          "fallback_model": "mistral:7b"
+        },
+        "out_of_memory": {
+          "action": "switch_to_smaller_model",
+          "alternative": "llama3.2:1b",
+          "reduce_ctx": 2048
+        }
+      },
+      "h1_api_failures": {
+        "401": "Unauthorized — check H1_API_TOKEN in .env",
+        "403": "Forbidden — program handle wrong or program closed",
+        "422": "Unprocessable — report template validation failed",
+        "429": "Rate limited — wait 60s before retry"
+      }
+    },
+
+    "environment_variables": {
+      "required": {
+        "OLLAMA_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "llama3:8b",
+        "AGENT_LOG_LEVEL": "INFO",
+        "MAX_CONCURRENT_SCANS": "3",
+        "REPORT_AUTO_SUBMIT": "false"
+      },
+      "optional": {
+        "H1_USERNAME": "",
+        "H1_API_TOKEN": "",
+        "OLLAMA_FALLBACK_MODEL": "mistral:7b",
+        "SHODAN_API_KEY": "",
+        "DISCORD_WEBHOOK_URL": "",
+        "SLACK_BOT_TOKEN": ""
+      }
+    },
+
+    "health_check_sequence": [
+      {"step": 1, "check": "Ollama Running",       "url": "/",          "method": "GET",  "expect_status": 200},
+      {"step": 2, "check": "Model Available",       "url": "/api/tags",  "method": "GET",  "expect_key": "models"},
+      {"step": 3, "check": "Ollama Chat Works",     "url": "/api/chat",  "method": "POST", "expect_key": "message"},
+      {"step": 4, "check": "H1 Auth Valid",         "url": "https://api.hackerone.com/v1/me",        "method": "GET", "expect_status": 200},
+      {"step": 5, "check": "H1 Programs Readable",  "url": "https://api.hackerone.com/v1/me/programs","method": "GET", "expect_status": 200}
+    ]
+  }
+}

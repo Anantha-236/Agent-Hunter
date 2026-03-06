@@ -1,0 +1,35 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Pytest
+.pytest_cache/
+
+# Blobs (large partial downloads)
+blobs/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Benchmarks & eval cache
+.benchmarks/
+.deepeval/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Reports (generated)
+reports/
+
+# Agents skills cache
+.agents/
+skills-lock.json

@@ -1,0 +1,24 @@
+# Core
+httpx==0.28.1
+
+# HTML Parsing
+beautifulsoup4==4.14.0
+lxml==6.0.2
+
+# TUI Dashboard
+rich==14.1.0
+
+# Utilities
+click==8.2.1
+typing-extensions==4.15.0
+
+# Voice / Speech — Interaction Modes
+SpeechRecognition==3.11.0
+PyAudio==0.2.14
+pyttsx3==2.98
+edge-tts==6.1.12
+
+# Web UI (for future dashboard)
+# fastapi==0.110.1
+# uvicorn==0.29.0
+# websockets==12.0

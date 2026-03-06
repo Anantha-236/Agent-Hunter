@@ -1,0 +1,166 @@
+# How the Agent Works — BBP Walkthrough
+
+## Input
+
+The agent takes a **target URL** and optional configuration:
+
+```bash
+# Basic scan
+python main.py --target https://example.com
+
+# Full BBP scan with auth + scope + profile saving
+python main.py --target https://meesho.com \
+  --scope "*.meesho.com" "api.meesho.com" \
+  --exclude "static.meesho.com" \
+  --cookie "session=abc123" \
+  --bearer-token "eyJ..." \
+  --login-url https://meesho.com/login \
+  --login-user test@email.com --login-pass password123 \
+  --save-profile meesho \
+  --modules sql_injection xss_scanner graphql_scanner idor_scanner
+```
+
+## Architecture
+
+```mermaid
+graph TD
+    A["Input: Target URL + Config"] --> B["Phase 1: Recon"]
+    B --> C["Phase 2: AI Strategy"]
+    C --> D["Phase 3: Scanning"]
+    D --> E["Phase 4: Validation"]
+    E --> F["Phase 5: Report"]
+    
+    B --> B1["Crawler - 53+ URLs"]
+    B --> B2["Fingerprinter - Tech Stack"]
+    B --> B3["WAF Detector - 10+ WAFs"]
+    
+    C --> C1["Ollama llama3:8b"]
+    C --> C2["Rule Engine Fallback"]
+    
+    D --> D1["17 Scanner Modules"]
+    D --> D2["Adaptive Payloads"]
+    D --> D3["WAF Bypass"]
+    
+    E --> E1["AI Validation"]
+    E --> E2["PoC Generation"]
+    E --> E3["False Positive Filter"]
+    
+    F --> F1["HackerOne Reports"]
+    F --> F2["HTML + MD + JSON"]
+    F --> F3["Learning Feedback"]
+```
+
+## Phase-by-Phase Scan Pipeline
+
+### Phase 1: Reconnaissance
+**File:** [orchestrator.py](file:///c:/Users/anant/Desktop/AgentiAI/core/orchestrator.py) → [_phase_recon()](file:///c:/Users/anant/Desktop/AgentiAI/core/orchestrator.py#186-214)
+
+1. **Fetch target** → get HTTP response, status, headers
+2. **Fingerprint** → detect technologies (PHP, WordPress, Nginx, etc.)
+3. **WAF Detection** → sends test payloads, checks for Cloudflare/Akamai/AWS signatures
+4. **Crawl** → discovers URLs, forms, parameters, JavaScript files (depth=3, max 500 URLs)
+
+**Output:** Target object with technologies, URLs, parameters, WAF info
+
+---
+
+### Phase 2: AI Strategy
+**File:** [ai_brain.py](file:///c:/Users/anant/Desktop/AgentiAI/core/ai_brain.py) → [analyse_recon()](file:///c:/Users/anant/Desktop/AgentiAI/core/ai_brain.py#297-362)
+
+1. **Rule Engine** maps technologies to vulnerability priorities:
+   - PHP → SQL Injection, Path Traversal, SSTI
+   - WordPress → SQLi, XSS, Auth bypass
+   - GraphQL → IDOR, Injection, Auth
+2. **Ollama llama3:8b** enhances with deeper reasoning
+3. **Parameters analyzed** — [id](file:///c:/Users/anant/Desktop/AgentiAI/scanners/injection/graphql_scanner.py#132-169) params → IDOR priority, [url](file:///c:/Users/anant/Desktop/AgentiAI/scanners/redirect/open_redirect.py#83-98) params → SSRF priority
+4. **Module ordering** decided — which scanners run first
+
+**Output:** Prioritized list of scanner modules
+
+---
+
+### Phase 3: Scanning (17 Modules)
+Each scanner tests discovered endpoints:
+
+| Category | Scanners | What They Find |
+|----------|----------|----------------|
+| **Injection** | SQLi, SSTI, Command, XXE, CRLF, GraphQL | Code/query injection, RCE |
+| **XSS** | Reflected, DOM, Stored | Script execution in browser |
+| **Auth** | Auth bypass, CSRF, Race condition | Session hijack, privilege escalation |
+| **Access** | IDOR, SSRF, Open redirect | Data leak, internal access |
+| **Files** | Path traversal | Read sensitive files |
+| **Config** | Misconfig, Host header, Subdomain takeover | Information disclosure |
+
+**How scanning works:**
+1. For each URL + parameter combination
+2. Send payloads (SQL: `' OR 1=1--`, XSS: `<script>alert(1)</script>`, etc.)
+3. If WAF detected → apply bypass variants (encoding, case swap, comment splitting)
+4. Analyze response for vulnerability evidence
+5. Record finding with severity, payload, evidence, request/response
+
+---
+
+### Phase 4: AI Validation
+**File:** [ai_brain.py](file:///c:/Users/anant/Desktop/AgentiAI/core/ai_brain.py) → [validate_finding()](file:///c:/Users/anant/Desktop/AgentiAI/core/ai_brain.py#561-597)
+
+1. **Rule engine** checks evidence patterns (e.g., "SQL error string in response" = confirmed SQLi)
+2. **Ollama** provides deeper analysis — is this a true positive or false positive?
+3. **PoC generated** for confirmed findings
+4. **False positives filtered out**
+
+---
+
+### Phase 5: Report Generation
+
+Three report types saved to `reports/`:
+
+| Type | Purpose |
+|------|---------|
+| `reports/scan_*.md` | Full Markdown report with all findings |
+| `reports/scan_*.html` | Styled dark-mode HTML dashboard |
+| `reports/scan_*.json` | Machine-readable for automation |
+| `reports/hackerone/h1_*.md` | **Copy-paste ready** HackerOne submissions with CVSS, CWE, PoC, impact |
+
+---
+
+## Learning Loop
+
+After each scan, the agent **learns**:
+
+```mermaid
+graph LR
+    A["Scan Results"] --> B["Rule Engine DB"]
+    A --> C["Payload Engine DB"]
+    B --> D["Better strategies next scan"]
+    C --> E["Skip blocked payloads, prioritize effective ones"]
+```
+
+- **Rule engine** tracks which modules found vulns per tech stack → adjusts priority
+- **Payload engine** tracks which payloads succeed/fail/get blocked per WAF → adapts
+- **AI outputs** stored for rule engine training → eventually works without Ollama
+
+## Project Structure
+
+```
+AgentiAI/
+├── main.py                    # CLI entry point
+├── config/
+│   ├── settings.py            # Configuration
+│   ├── profiles.py            # Saved target configs
+│   └── vulnerability_taxonomy.json  # 237 vuln types
+├── core/
+│   ├── orchestrator.py        # Main scan pipeline
+│   ├── ai_brain.py            # Ollama + Rule Engine
+│   ├── waf_engine.py          # WAF detection & bypass
+│   ├── auth_session.py        # Authenticated scanning
+│   ├── payload_engine.py      # Adaptive payloads
+│   ├── models.py              # Data models
+│   ├── reward.py              # RL reward scoring
+│   └── memory.py              # Scan history
+├── scanners/                  # 17 scanner modules
+├── recon/                     # Crawler + fingerprinter
+├── reporting/
+│   ├── reporter.py            # MD/HTML/JSON reports
+│   └── hackerone_report.py    # HackerOne-ready reports
+└── data/                      # Learning databases
+```

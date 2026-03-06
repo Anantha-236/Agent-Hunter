@@ -1,0 +1,206 @@
+"""
+Persistent Scan Memory — SQLite-backed history of scans, findings, and rewards.
+Enables cross-scan intelligence, regression tracking, and redundancy avoidance.
+"""
+from __future__ import annotations
+import json
+import logging
+import os
+import sqlite3
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "scan_memory.db")
+
+
+class ScanMemory:
+    """SQLite-based persistent memory for the agent."""
+
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+        if db_path != ":memory:":
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.db_path = db_path
+        self._conn = sqlite3.connect(db_path)
+        self._conn.row_factory = sqlite3.Row
+        self._create_tables()
+
+    def _create_tables(self):
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS scans (
+                scan_id       TEXT PRIMARY KEY,
+                target_url    TEXT NOT NULL,
+                started_at    TEXT NOT NULL,
+                ended_at      TEXT,
+                total_findings INTEGER DEFAULT 0,
+                confirmed      INTEGER DEFAULT 0,
+                total_score    REAL    DEFAULT 0.0,
+                technologies   TEXT    DEFAULT '[]',
+                modules_run    TEXT    DEFAULT '[]',
+                errors         TEXT    DEFAULT '[]',
+                reward_data    TEXT    DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS findings (
+                finding_id    TEXT PRIMARY KEY,
+                scan_id       TEXT NOT NULL,
+                title         TEXT NOT NULL,
+                vuln_type     TEXT NOT NULL,
+                severity      TEXT NOT NULL,
+                url           TEXT NOT NULL,
+                parameter     TEXT DEFAULT '',
+                payload       TEXT DEFAULT '',
+                evidence      TEXT DEFAULT '',
+                confirmed     INTEGER DEFAULT 0,
+                cvss_score    REAL DEFAULT 0.0,
+                cwe_id        TEXT DEFAULT '',
+                module        TEXT DEFAULT '',
+                discovered_at TEXT NOT NULL,
+                FOREIGN KEY (scan_id) REFERENCES scans(scan_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS known_params (
+                url           TEXT NOT NULL,
+                parameter     TEXT NOT NULL,
+                vuln_type     TEXT NOT NULL,
+                last_scanned  TEXT NOT NULL,
+                was_vulnerable INTEGER DEFAULT 0,
+                PRIMARY KEY (url, parameter, vuln_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_findings_target ON findings(url);
+            CREATE INDEX IF NOT EXISTS idx_findings_type ON findings(vuln_type);
+            CREATE INDEX IF NOT EXISTS idx_scans_target ON scans(target_url);
+        """)
+        self._conn.commit()
+
+    # ── Scan Lifecycle ────────────────────────────────────────
+
+    def start_scan(self, scan_id: str, target_url: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO scans (scan_id, target_url, started_at) VALUES (?, ?, ?)",
+            (scan_id, target_url, datetime.utcnow().isoformat()),
+        )
+        self._conn.commit()
+
+    def finish_scan(self, scan_id: str, stats: Dict[str, Any],
+                    reward_data: Dict[str, Any] = None) -> None:
+        self._conn.execute("""
+            UPDATE scans SET ended_at=?, total_findings=?, confirmed=?,
+                total_score=?, modules_run=?, errors=?, reward_data=?
+            WHERE scan_id=?
+        """, (
+            datetime.utcnow().isoformat(),
+            stats.get("total_findings", 0),
+            stats.get("confirmed", 0),
+            stats.get("total_score", 0.0),
+            json.dumps(stats.get("modules_run", [])),
+            json.dumps(stats.get("errors", [])),
+            json.dumps(reward_data or {}),
+            scan_id,
+        ))
+        self._conn.commit()
+
+    # ── Findings ──────────────────────────────────────────────
+
+    def store_finding(self, scan_id: str, finding) -> None:
+        """Store a finding from a Finding dataclass."""
+        self._conn.execute("""
+            INSERT OR REPLACE INTO findings
+            (finding_id, scan_id, title, vuln_type, severity, url, parameter,
+             payload, evidence, confirmed, cvss_score, cwe_id, module, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            finding.id, scan_id, finding.title, finding.vuln_type,
+            finding.severity, finding.url, finding.parameter,
+            finding.payload, finding.evidence, int(finding.confirmed),
+            finding.cvss_score, finding.cwe_id, finding.module,
+            finding.discovered_at.isoformat(),
+        ))
+        self._conn.commit()
+
+    def store_findings(self, scan_id: str, findings: list) -> None:
+        for f in findings:
+            self.store_finding(scan_id, f)
+
+    def get_known_findings(self, target_url: str) -> Set[Tuple[str, str, str]]:
+        """Get set of (url, parameter, vuln_type) for previously found vulns on this target."""
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).hostname
+        rows = self._conn.execute(
+            "SELECT url, parameter, vuln_type FROM findings WHERE url LIKE ?",
+            (f"%{domain}%",),
+        ).fetchall()
+        return {(r["url"], r["parameter"], r["vuln_type"]) for r in rows}
+
+    # ── Known Params (redundancy avoidance) ───────────────────
+
+    def mark_param_scanned(self, url: str, parameter: str, vuln_type: str,
+                           was_vulnerable: bool = False) -> None:
+        self._conn.execute("""
+            INSERT OR REPLACE INTO known_params (url, parameter, vuln_type, last_scanned, was_vulnerable)
+            VALUES (?, ?, ?, ?, ?)
+        """, (url, parameter, vuln_type, datetime.utcnow().isoformat(), int(was_vulnerable)))
+        self._conn.commit()
+
+    def was_recently_scanned(self, url: str, parameter: str, vuln_type: str,
+                             max_age_hours: int = 24) -> bool:
+        row = self._conn.execute(
+            "SELECT last_scanned FROM known_params WHERE url=? AND parameter=? AND vuln_type=?",
+            (url, parameter, vuln_type),
+        ).fetchone()
+        if not row:
+            return False
+        from datetime import timedelta
+        scanned = datetime.fromisoformat(row["last_scanned"])
+        return (datetime.utcnow() - scanned) < timedelta(hours=max_age_hours)
+
+    # ── History Queries ───────────────────────────────────────
+
+    def get_scan_history(self, target_url: str = None, limit: int = 10) -> List[Dict]:
+        if target_url:
+            rows = self._conn.execute(
+                "SELECT * FROM scans WHERE target_url LIKE ? ORDER BY started_at DESC LIMIT ?",
+                (f"%{target_url}%", limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM scans ORDER BY started_at DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_target_profile(self, target_url: str) -> Dict[str, Any]:
+        """Build a profile of everything known about a target from past scans."""
+        scans = self.get_scan_history(target_url, limit=50)
+        findings = self.get_known_findings(target_url)
+        all_techs = set()
+        for s in scans:
+            try:
+                all_techs.update(json.loads(s.get("technologies", "[]")))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {
+            "total_scans": len(scans),
+            "known_vulnerabilities": len(findings),
+            "known_technologies": list(all_techs),
+            "last_scan": scans[0]["started_at"] if scans else None,
+            "best_score": max((s.get("total_score", 0) for s in scans), default=0),
+        }
+
+    def to_ai_context(self, target_url: str) -> str:
+        """Format memory as context for AI brain strategy decisions."""
+        profile = self.get_target_profile(target_url)
+        if profile["total_scans"] == 0:
+            return "No previous scan data for this target."
+        lines = [
+            f"Previous scans: {profile['total_scans']}",
+            f"Known vulns: {profile['known_vulnerabilities']}",
+            f"Technologies seen: {', '.join(profile['known_technologies']) or 'none'}",
+            f"Last scan: {profile['last_scan']}",
+            f"Best reward score: {profile['best_score']:.1f}",
+        ]
+        return "\n".join(lines)
+
+    def close(self) -> None:
+        self._conn.close()

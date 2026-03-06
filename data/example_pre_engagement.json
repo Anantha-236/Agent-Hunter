@@ -1,0 +1,92 @@
+{
+  "pre_engagement_checklist": {
+    "target_information": {
+      "target_name": "Acme Corp Bug Bounty",
+      "target_url": "https://app.acme.com",
+      "program_type": "public",
+      "in_scope_assets": [
+        "*.acme.com",
+        "api.acme.com",
+        "app.acme.com"
+      ],
+      "out_of_scope_assets": [
+        "blog.acme.com",
+        "status.acme.com",
+        "*.acme-internal.com"
+      ]
+    },
+    "legal_and_authorization": {
+      "authorization_type": "bug_bounty_program",
+      "safe_harbor_clause_present": true,
+      "terms_of_service_reviewed": true,
+      "rules_of_engagement_url": "https://hackerone.com/acme/policy",
+      "emergency_contact": "security@acme.com",
+      "legal_jurisdiction": "US"
+    },
+    "scope_and_exclusions": {
+      "vulnerability_types_in_scope": [
+        "XSS",
+        "SQL_Injection",
+        "SSRF",
+        "IDOR",
+        "Authentication_Bypass",
+        "CSRF",
+        "Path_Traversal",
+        "Command_Injection",
+        "XXE",
+        "Open_Redirect",
+        "SSTI",
+        "CRLF_Injection",
+        "Race_Condition",
+        "GraphQL"
+      ],
+      "vulnerability_types_excluded": [
+        "DoS",
+        "Social_Engineering",
+        "Physical_Access"
+      ],
+      "testing_hours": "24/7",
+      "rate_limiting_requirements": "Max 10 requests per second",
+      "data_handling_restrictions": "Do not access or store PII"
+    },
+    "operational_safety": {
+      "automated_scanning_allowed": true,
+      "automated_scanning_restrictions": false,
+      "mass_assignment_testing_allowed": true,
+      "cloud_metadata_testing_allowed": true,
+      "bruteforce_allowed": false,
+      "max_requests_per_second": 10,
+      "respect_robots_txt": true,
+      "proxy_required": false,
+      "vpn_required": false
+    },
+    "program_rules": {
+      "disclosure_policy": "coordinated",
+      "min_disclosure_days": 90,
+      "duplicate_policy": "first_reporter_wins",
+      "bounty_range": {
+        "critical": "$5000-$15000",
+        "high": "$2000-$5000",
+        "medium": "$500-$2000",
+        "low": "$100-$500"
+      },
+      "payout_currency": "USD",
+      "response_sla_hours": 48
+    },
+    "reporting_requirements": {
+      "report_format": "markdown",
+      "poc_required": true,
+      "video_poc_accepted": true,
+      "minimum_severity": "low",
+      "report_language": "English",
+      "platform": "HackerOne"
+    },
+    "risk_control": {
+      "max_severity_to_test": "critical",
+      "avoid_production_impact": true,
+      "test_accounts_provided": false,
+      "staging_environment_available": false,
+      "rollback_contact": "security@acme.com"
+    }
+  }
+}
