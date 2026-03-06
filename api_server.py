@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config.settings import ENABLED_MODULES
-from core.models import Finding, Scope, Target, ScanState
+from core.models import Finding, Scope, Target
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,22 @@ _settings: Dict[str, Any] = _model_to_dict(SettingsPayload())
 
 # ── Helpers ────────────────────────────────────────────────────
 
+DEPTH_TO_CRAWL = {
+    "light": 1,
+    "medium": 3,
+    "deep": 5,
+}
+
+
+def _resolve_crawl_depth(depth: str) -> int:
+    depth_key = (depth or "medium").strip().lower()
+    if depth_key in DEPTH_TO_CRAWL:
+        return DEPTH_TO_CRAWL[depth_key]
+    try:
+        return max(1, min(int(depth_key), 10))
+    except ValueError:
+        return DEPTH_TO_CRAWL["medium"]
+
 def _finding_to_dict(f: Finding) -> dict:
     return {
         "id": f.id,
@@ -140,6 +156,14 @@ async def _run_scan(scan_id: str, req: ScanRequest):
 
     target = Target(url=req.url, scope=scope)
     modules = req.modules or list(ENABLED_MODULES)
+    crawl_depth = _resolve_crawl_depth(req.depth)
+    max_threads = max(1, min(req.threads, 64))
+
+    def _on_thought(thought: str) -> None:
+        entry["logs"].append({
+            "ts": datetime.utcnow().strftime("%H:%M:%S"),
+            "msg": thought,
+        })
 
     try:
         async with Orchestrator(
@@ -148,22 +172,10 @@ async def _run_scan(scan_id: str, req: ScanRequest):
             use_tui=False,
             verify_ssl=req.verify_ssl,
             auto_confirm=True,
+            crawl_depth=crawl_depth,
+            http_concurrency=max_threads,
         ) as orch:
-            # Monkey-patch log_thought so we can capture thoughts in real time
-            _orig_log_thought = ScanState.log_thought
-
-            def _patched_log_thought(self, thought: str):
-                _orig_log_thought(self, thought)
-                entry["logs"].append({
-                    "ts": datetime.utcnow().strftime("%H:%M:%S"),
-                    "msg": thought,
-                })
-
-            ScanState.log_thought = _patched_log_thought
-            try:
-                state = await orch.run()
-            finally:
-                ScanState.log_thought = _orig_log_thought
+            state = await orch.run(thought_callback=_on_thought)
 
             entry["findings"] = [_finding_to_dict(f) for f in state.findings]
             entry["phase"] = state.phase

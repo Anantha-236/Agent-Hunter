@@ -29,6 +29,10 @@ Thumbs.db
 
 # Reports (generated)
 reports/
+data/*.db
+
+# Local environment files
+docker-fleet/.env
 
 # Agents skills cache
 .agents/

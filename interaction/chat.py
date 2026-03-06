@@ -23,7 +23,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from core.ai_brain import AIBrain, SYSTEM_PROMPT
+from core.Hunter_brain import AIBrain, SYSTEM_PROMPT
 from core.hunter_mind import (
     HunterMind, detect_domains, get_thinking_style,
     KNOWLEDGE_DOMAINS, ProbabilisticReasoning, FutureInsight,

@@ -34,11 +34,11 @@ class RateLimiter:
 
 class HttpClient:
     def __init__(self, scope=None, headers=None, cookies=None, proxy=None,
-                 verify_ssl=True, policy_enforcer=None):
+                 verify_ssl=True, policy_enforcer=None, concurrency: Optional[int] = None):
         self._scope = scope
         self._policy_enforcer = policy_enforcer
         self._rate_limiter = RateLimiter()
-        self._semaphore = asyncio.Semaphore(HTTP_CONCURRENCY)
+        self._semaphore = asyncio.Semaphore(concurrency or HTTP_CONCURRENCY)
         self._session_headers = {**DEFAULT_HEADERS, **(headers or {})}
         self._cookies = cookies or {}
         self._proxy = proxy

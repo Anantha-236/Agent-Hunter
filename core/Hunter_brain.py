@@ -344,10 +344,120 @@ VALIDATION_RULES = {
         "confirmed_if": lambda f: "evil.com" in f.evidence.lower(),
         "severity": "medium",
     },
+    "open_redirect_reflected": {
+        "base_confidence": 65,
+        "confirmed_if": lambda f: "payload reflected" in f.evidence.lower() or "refresh" in (f.response or "").lower(),
+        "severity": "medium",
+    },
     "header_injection": {
         "base_confidence": 75,
         "confirmed_if": lambda f: "injected" in f.evidence.lower(),
         "severity": "medium",
+    },
+    "response_splitting": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "set-cookie" in (f.response or "").lower() or "injected" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "command_injection_time": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "delay" in f.evidence.lower() or "sleep" in (f.payload or "").lower(),
+        "severity": "critical",
+    },
+    "command_injection_output": {
+        "base_confidence": 90,
+        "confirmed_if": lambda f: any(sig in f.evidence.lower() for sig in ["uid=", "root:x:0", "windows", "bin/"]),
+        "severity": "critical",
+    },
+    "xxe_parser_detected": {
+        "base_confidence": 65,
+        "confirmed_if": lambda f: "doctype" in f.evidence.lower() or "entity" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "graphql_introspection": {
+        "base_confidence": 70,
+        "confirmed_if": lambda f: "__schema" in f.evidence.lower() or "introspection" in f.title.lower(),
+        "severity": "medium",
+    },
+    "graphql_bola": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "unauthorized data" in f.evidence.lower() or "id enumeration" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "graphql_dos": {
+        "base_confidence": 60,
+        "confirmed_if": lambda f: "heavy query" in f.evidence.lower() or "resource exhaustion" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "graphql_batch": {
+        "base_confidence": 60,
+        "confirmed_if": lambda f: "batch" in f.evidence.lower() or "multiple operations" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "graphql_sqli": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: any(sig in f.evidence.lower() for sig in ["sql", "syntax", "database"]),
+        "severity": "high",
+    },
+    "graphql_suggestions": {
+        "base_confidence": 45,
+        "confirmed_if": lambda f: "did you mean" in f.evidence.lower() or "suggestion" in f.evidence.lower(),
+        "severity": "low",
+    },
+    "host_header_injection": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "host" in f.evidence.lower() and "injected" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "oauth_open_redirect": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "redirect_uri" in (f.parameter or "").lower() or "oauth" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "csrf": {
+        "base_confidence": 65,
+        "confirmed_if": lambda f: "missing csrf protection" in f.title.lower() or "no csrf token" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "csrf_token_bypass": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "invalid csrf token" in f.evidence.lower() and "accepted" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "race_condition": {
+        "base_confidence": 60,
+        "confirmed_if": lambda f: "race" in f.title.lower() or "concurrent" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "cors_wildcard": {
+        "base_confidence": 70,
+        "confirmed_if": lambda f: "access-control-allow-origin: *" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "cors_origin_reflection": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "origin reflected" in f.evidence.lower() or "access-control-allow-origin" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "directory_listing": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "index of /" in f.evidence.lower() or "directory listing" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "password_reset_poisoning": {
+        "base_confidence": 85,
+        "confirmed_if": lambda f: "password reset" in f.title.lower() and "host" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "host_header_redirect": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "location" in f.evidence.lower() and "host" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "cache_poisoning_host": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "cache" in f.evidence.lower() and "host" in f.evidence.lower(),
+        "severity": "high",
     },
     "subdomain_takeover": {
         "base_confidence": 65,

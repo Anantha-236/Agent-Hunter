@@ -22,8 +22,30 @@ docker compose build orchestrator
 log "Starting all scanner containers..."
 docker compose up -d
 
-log "Waiting for services to initialize (45s)..."
-sleep 45
+wait_http() {
+  local name="$1"
+  local url="$2"
+  local max_attempts="$3"
+  local delay_sec="$4"
+  local i
+  for ((i=1; i<=max_attempts; i++)); do
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+    if [ "$STATUS" = "200" ]; then
+      ok "$name is ready"
+      return 0
+    fi
+    log "Waiting for $name (attempt $i/$max_attempts, HTTP $STATUS)..."
+    sleep "$delay_sec"
+  done
+  warn "$name did not become healthy in time"
+  return 1
+}
+
+log "Waiting for ZAP API..."
+wait_http "ZAP" "http://localhost:8090/JSON/core/view/version/" 60 2 || true
+
+log "Waiting for orchestrator API..."
+wait_http "Orchestrator" "http://localhost:8888/" 30 2 || true
 
 # ── 2. Health check orchestrator ──────────────────────────
 log "Checking orchestrator health..."

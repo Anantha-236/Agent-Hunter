@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from config.settings import Severity
 import re
 
@@ -98,6 +98,7 @@ class ScanState:
     scan_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     started_at: datetime = field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
+    thought_callback: Optional[Callable[[str], None]] = None
 
     def add_finding(self, finding: Finding) -> None:
         key = (finding.url, finding.parameter, finding.vuln_type, finding.payload)
@@ -108,6 +109,11 @@ class ScanState:
     def log_thought(self, thought: str) -> None:
         ts = datetime.utcnow().strftime("%H:%M:%S")
         self.agent_thoughts.append(f"[{ts}] {thought}")
+        if self.thought_callback:
+            try:
+                self.thought_callback(thought)
+            except Exception:
+                pass
 
     def stats(self) -> Dict[str, Any]:
         from collections import Counter

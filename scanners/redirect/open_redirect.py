@@ -91,7 +91,7 @@ class OpenRedirectScanner(BaseScanner):
             if any(domain in location for domain in ["evil.com", "attacker.com"]):
                 return self.make_finding(
                     title=f"Open Redirect in discovered URL",
-                    vuln_type="open_redirect", severity=Severity.MEDIUM,
+                    vuln_type="open_redirect_reflected", severity=Severity.MEDIUM,
                     url=url, evidence=f"Redirects to: {location}",
                     request=raw_req, cwe_id="CWE-601",
                     owasp_category="A01:2021 - Broken Access Control",

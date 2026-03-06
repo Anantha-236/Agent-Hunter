@@ -76,13 +76,16 @@ class Orchestrator:
                  use_tui=True, use_memory=True, reward_scheme=None,
                  auth_session=None, policy: BBPPolicy = None,
                  pre_engagement_checklist: PreEngagementChecklist = None,
-                 auto_confirm: bool = False, verify_ssl: bool = True):
+                 auto_confirm: bool = False, verify_ssl: bool = True,
+                 crawl_depth: int = 3, http_concurrency: Optional[int] = None):
         self.target = target
         self.modules = modules or list(SCANNER_REGISTRY.keys())
         self.use_ai = use_ai
         self.proxy = proxy
         self.auto_confirm = auto_confirm
         self.verify_ssl = verify_ssl
+        self.crawl_depth = crawl_depth
+        self.http_concurrency = http_concurrency
         self.cookies = cookies or {}
         self.headers = headers or {}
         self.use_tui = use_tui
@@ -129,6 +132,7 @@ class Orchestrator:
             headers=merged_headers, proxy=self.proxy,
             verify_ssl=self.verify_ssl,
             policy_enforcer=self.policy_enforcer,
+            concurrency=self.http_concurrency,
         )
         await self._client.__aenter__()
 
@@ -187,11 +191,11 @@ class Orchestrator:
             step=len(state.modules_run),
         )
 
-    async def run(self, resume_from: str = None) -> ScanState:
+    async def run(self, resume_from: str = None, thought_callback=None) -> ScanState:
         import time as _time
         self._scan_start_time = _time.monotonic()
 
-        state = ScanState(target=self.target)
+        state = ScanState(target=self.target, thought_callback=thought_callback)
         state.log_thought("Scan started")
 
         # Start RL episode (Feature 9: Episode lifecycle)
@@ -509,7 +513,7 @@ class Orchestrator:
         else:
             state.log_thought("No WAF detected")
 
-        self.target = await Crawler(self._client).crawl(self.target)
+        self.target = await Crawler(self._client).crawl(self.target, depth=self.crawl_depth)
         # IMPORTANT: sync state.target so scanners see discovered_params/urls
         state.target = self.target
         state.log_thought(f"Crawled {len(self.target.discovered_urls)} URLs")

@@ -19,7 +19,7 @@ from interaction.base import InputHandler, InteractionMode, OutputHandler
 from interaction.chat import ChatSession
 from interaction.text_handler import TextInput, TextOutput
 from interaction.voice_handler import VoiceInput, VoiceOutput
-from core.ai_brain import AIBrain
+from core.Hunter_brain import AIBrain
 
 logger = logging.getLogger(__name__)
 

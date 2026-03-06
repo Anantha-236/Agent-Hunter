@@ -167,7 +167,19 @@ class CSRFScanner(BaseScanner):
             target_url = action if action.startswith("http") else url
             # Submit all form fields (not just one) to properly test token validation
             resp, _ = await self.client.post(target_url, data=fields)
-            if resp and resp.status_code in (200, 302, 301):
+            if resp and resp.status_code in (200, 301, 302):
+                # A redirect to login/error is usually a rejection, not a bypass.
+                location = (resp.headers.get("location", "") or "").lower()
+                body = (resp.text or "").lower()
+                reject_markers = [
+                    "login", "signin", "sign-in", "forbidden", "denied",
+                    "invalid", "expired", "csrf", "token mismatch", "unauthorized",
+                ]
+                if any(marker in location for marker in reject_markers):
+                    return None
+                if any(marker in body for marker in reject_markers):
+                    return None
+
                 return self.make_finding(
                     title="CSRF Token Not Validated",
                     vuln_type="csrf_token_bypass",

@@ -9,7 +9,7 @@ import httpx
 
 ZAP_HOST    = os.getenv("ZAP_HOST", "zap")
 ZAP_PORT    = os.getenv("ZAP_PORT", "8080")
-ZAP_API_KEY = os.getenv("ZAP_API_KEY", "hunter-zap-key")
+ZAP_API_KEY = os.getenv("ZAP_API_KEY", "")
 ZAP_BASE    = f"http://{ZAP_HOST}:{ZAP_PORT}"
 
 DEPTH_SETTINGS = {
