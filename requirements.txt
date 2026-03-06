@@ -18,7 +18,8 @@ PyAudio==0.2.14
 pyttsx3==2.98
 edge-tts==6.1.12
 
-# Web UI (for future dashboard)
-# fastapi==0.110.1
-# uvicorn==0.29.0
-# websockets==12.0
+# Web UI (dashboard API server)
+fastapi==0.110.1
+uvicorn==0.29.0
+websockets==12.0
+sse-starlette==2.0.0

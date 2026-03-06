@@ -1,0 +1,22 @@
+{
+    "name": "vuln-test-app",
+    "version": "1.0.0",
+    "description": "Intentionally vulnerable app for Agent-Hunter dependency scanning tests",
+    "dependencies": {
+        "lodash": "4.17.4",
+        "express": "4.16.0",
+        "axios": "0.18.0",
+        "moment": "2.18.1",
+        "jquery": "1.12.4",
+        "handlebars": "4.0.11",
+        "serialize-javascript": "1.6.1",
+        "node-forge": "0.9.0",
+        "minimist": "1.2.0",
+        "y18n": "3.2.1",
+        "ansi-regex": "3.0.0",
+        "path-parse": "1.0.6",
+        "ws": "5.0.0",
+        "jsonwebtoken": "8.4.0",
+        "tar": "4.4.10"
+    }
+}

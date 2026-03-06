@@ -1,0 +1,501 @@
+[
+  {
+    "type": "CVE-CVE-2019-10744",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "CRITICAL",
+    "description": "lodash@4.17.4: Prototype pollution",
+    "package": "lodash@4.17.4",
+    "cve": "CVE-2019-10744"
+  },
+  {
+    "type": "CVE-CVE-2019-5413",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "MEDIUM",
+    "description": "express@4.16.0: Open redirect",
+    "package": "express@4.16.0",
+    "cve": "CVE-2019-5413"
+  },
+  {
+    "type": "CVE-CVE-2019-10742",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "axios@0.18.0: DoS via regex",
+    "package": "axios@0.18.0",
+    "cve": "CVE-2019-10742"
+  },
+  {
+    "type": "CVE-CVE-2019-11358",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "MEDIUM",
+    "description": "jquery@1.12.4: Prototype pollution",
+    "package": "jquery@1.12.4",
+    "cve": "CVE-2019-11358"
+  },
+  {
+    "type": "CVE-CVE-2019-19919",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "CRITICAL",
+    "description": "handlebars@4.0.11: Remote code execution",
+    "package": "handlebars@4.0.11",
+    "cve": "CVE-2019-19919"
+  },
+  {
+    "type": "CVE-CVE-2019-16769",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "serialize-javascript@1.6.1: XSS via serialized code",
+    "package": "serialize-javascript@1.6.1",
+    "cve": "CVE-2019-16769"
+  },
+  {
+    "type": "CVE-CVE-2020-7720",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "node-forge@0.9.0: Prototype pollution",
+    "package": "node-forge@0.9.0",
+    "cve": "CVE-2020-7720"
+  },
+  {
+    "type": "CVE-CVE-2020-7598",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "MEDIUM",
+    "description": "minimist@1.2.0: Prototype pollution",
+    "package": "minimist@1.2.0",
+    "cve": "CVE-2020-7598"
+  },
+  {
+    "type": "CVE-CVE-2020-7774",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "y18n@3.2.1: Prototype pollution",
+    "package": "y18n@3.2.1",
+    "cve": "CVE-2020-7774"
+  },
+  {
+    "type": "CVE-CVE-2021-32640",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "MEDIUM",
+    "description": "ws@5.0.0: ReDoS",
+    "package": "ws@5.0.0",
+    "cve": "CVE-2021-32640"
+  },
+  {
+    "type": "CVE-CVE-2022-23529",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "jsonwebtoken@8.4.0: Insecure key handling",
+    "package": "jsonwebtoken@8.4.0",
+    "cve": "CVE-2022-23529"
+  },
+  {
+    "type": "CVE-CVE-2021-32803",
+    "url": "http://localhost:8030/package.json",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "tar@4.4.10: Arbitrary file overwrite",
+    "package": "tar@4.4.10",
+    "cve": "CVE-2021-32803"
+  },
+  {
+    "type": "CVE-CVE-2019-14232",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "Django==2.2.0: ReDoS in strip_tags",
+    "package": "Django==2.2.0",
+    "cve": "CVE-2019-14232"
+  },
+  {
+    "type": "CVE-CVE-2019-16865",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "Pillow==5.2.0: DoS via crafted image",
+    "package": "Pillow==5.2.0",
+    "cve": "CVE-2019-16865"
+  },
+  {
+    "type": "CVE-CVE-2018-18074",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "MEDIUM",
+    "description": "requests==2.19.1: Session info leak on redirect",
+    "package": "requests==2.19.1",
+    "cve": "CVE-2018-18074"
+  },
+  {
+    "type": "CVE-CVE-2017-18342",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "CRITICAL",
+    "description": "PyYAML==3.13: Arbitrary code exec via yaml.load",
+    "package": "PyYAML==3.13",
+    "cve": "CVE-2017-18342"
+  },
+  {
+    "type": "CVE-CVE-2018-10903",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "cryptography==2.3: GCM tag verification bypass",
+    "package": "cryptography==2.3",
+    "cve": "CVE-2018-10903"
+  },
+  {
+    "type": "CVE-CVE-2019-11324",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "urllib3==1.24.1: Certificate validation bypass",
+    "package": "urllib3==1.24.1",
+    "cve": "CVE-2019-11324"
+  },
+  {
+    "type": "CVE-CVE-2019-10906",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "Jinja2==2.10: Sandbox escape",
+    "package": "Jinja2==2.10",
+    "cve": "CVE-2019-10906"
+  },
+  {
+    "type": "CVE-CVE-2018-1000805",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "paramiko==2.4.1: Auth bypass",
+    "package": "paramiko==2.4.1",
+    "cve": "CVE-2018-1000805"
+  },
+  {
+    "type": "CVE-CVE-2018-1000656",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "HIGH",
+    "description": "Flask==0.12.2: DoS via large JSON",
+    "package": "Flask==0.12.2",
+    "cve": "CVE-2018-1000656"
+  },
+  {
+    "type": "CVE-CVE-2021-28957",
+    "url": "http://localhost:8030/requirements.txt",
+    "category": "dependency",
+    "severity": "MEDIUM",
+    "description": "lxml==4.2.5: XSS in clean module",
+    "package": "lxml==4.2.5",
+    "cve": "CVE-2021-28957"
+  },
+  {
+    "type": "Hardcoded-Secret",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "Hardcoded-Secret in vuln_app.py at line(s) [15, 16, 17, 18, 19, 66]",
+    "lines": [
+      15,
+      16,
+      17,
+      18,
+      19,
+      66
+    ]
+  },
+  {
+    "type": "SQL-Injection",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "SQL-Injection in vuln_app.py at line(s) [26]",
+    "lines": [
+      26
+    ]
+  },
+  {
+    "type": "Command-Injection",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "Command-Injection in vuln_app.py at line(s) [33]",
+    "lines": [
+      33
+    ]
+  },
+  {
+    "type": "Path-Traversal",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "Path-Traversal in vuln_app.py at line(s) [40]",
+    "lines": [
+      40
+    ]
+  },
+  {
+    "type": "Insecure-Deserialization",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "Insecure-Deserialization in vuln_app.py at line(s) [46]",
+    "lines": [
+      46
+    ]
+  },
+  {
+    "type": "Weak-Crypto",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "Weak-Crypto in vuln_app.py at line(s) [51]",
+    "lines": [
+      51
+    ]
+  },
+  {
+    "type": "Unsafe-YAML-Load",
+    "url": "http://localhost:8040/vuln_app.py",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "Unsafe-YAML-Load in vuln_app.py at line(s) [56]",
+    "lines": [
+      56
+    ]
+  },
+  {
+    "type": "Hardcoded-Secret",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "Hardcoded-Secret in vuln_app.js at line(s) [15, 16, 17]",
+    "lines": [
+      15,
+      16,
+      17
+    ]
+  },
+  {
+    "type": "SQL-Injection",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "SQL-Injection in vuln_app.js at line(s) [27]",
+    "lines": [
+      27
+    ]
+  },
+  {
+    "type": "XSS-Reflected",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "XSS-Reflected in vuln_app.js at line(s) [36]",
+    "lines": [
+      36
+    ]
+  },
+  {
+    "type": "Command-Injection",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "Command-Injection in vuln_app.js at line(s) [43]",
+    "lines": [
+      43
+    ]
+  },
+  {
+    "type": "Path-Traversal",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "Path-Traversal in vuln_app.js at line(s) [52]",
+    "lines": [
+      52
+    ]
+  },
+  {
+    "type": "Eval-Usage",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "CRITICAL",
+    "description": "Eval-Usage in vuln_app.js at line(s) [59]",
+    "lines": [
+      59
+    ]
+  },
+  {
+    "type": "Weak-Crypto",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "Weak-Crypto in vuln_app.js at line(s) [66]",
+    "lines": [
+      66
+    ]
+  },
+  {
+    "type": "Prototype-Pollution",
+    "url": "http://localhost:8040/vuln_app.js",
+    "category": "sast",
+    "severity": "HIGH",
+    "description": "Prototype-Pollution in vuln_app.js at line(s) [79]",
+    "lines": [
+      79
+    ]
+  },
+  {
+    "type": "Open-Port",
+    "url": "172.30.0.20:21",
+    "category": "network",
+    "severity": "CRITICAL",
+    "description": "vsftpd 2.3.4 \u2014 backdoor CVE-2011-2523",
+    "port": 21,
+    "service": "vsftpd 2.3.4"
+  },
+  {
+    "type": "Open-Port",
+    "url": "172.30.0.20:22",
+    "category": "network",
+    "severity": "HIGH",
+    "description": "OpenSSH 4.7p1 \u2014 outdated, weak creds",
+    "port": 22,
+    "service": "OpenSSH 4.7p1"
+  },
+  {
+    "type": "Open-Port",
+    "url": "172.30.0.20:23",
+    "category": "network",
+    "severity": "HIGH",
+    "description": "Telnet \u2014 plaintext protocol",
+    "port": 23,
+    "service": "Telnet"
+  },
+  {
+    "type": "Open-Port",
+    "url": "172.30.0.20:3306",
+    "category": "network",
+    "severity": "CRITICAL",
+    "description": "MySQL 5.0.51a \u2014 no authentication",
+    "port": 3306,
+    "service": "MySQL 5.0.51a"
+  },
+  {
+    "type": "Open-Port",
+    "url": "172.30.0.20:445",
+    "category": "network",
+    "severity": "CRITICAL",
+    "description": "Samba 3.0.20 \u2014 CVE-2007-2447 RCE",
+    "port": 445,
+    "service": "Samba 3.0.20"
+  },
+  {
+    "type": "Default-Creds",
+    "url": "172.30.0.20:5432",
+    "category": "network",
+    "severity": "HIGH",
+    "description": "PostgreSQL \u2014 postgres/postgres",
+    "service": "PostgreSQL"
+  },
+  {
+    "type": "SQLi",
+    "url": "http://localhost:8010/vulnerabilities/sqli/",
+    "category": "web",
+    "severity": "CRITICAL",
+    "description": "UNION-based SQL injection via 'id' param"
+  },
+  {
+    "type": "XSS-Reflected",
+    "url": "http://localhost:8010/vulnerabilities/xss_r/",
+    "category": "web",
+    "severity": "HIGH",
+    "description": "Reflected XSS via 'name' param"
+  },
+  {
+    "type": "XSS-Stored",
+    "url": "http://localhost:8010/vulnerabilities/xss_s/",
+    "category": "web",
+    "severity": "HIGH",
+    "description": "Stored XSS via 'message' param"
+  },
+  {
+    "type": "Command-Injection",
+    "url": "http://localhost:8010/vulnerabilities/exec/",
+    "category": "web",
+    "severity": "CRITICAL",
+    "description": "OS command injection via 'ip' param"
+  },
+  {
+    "type": "File-Inclusion",
+    "url": "http://localhost:8010/vulnerabilities/fi/",
+    "category": "web",
+    "severity": "HIGH",
+    "description": "Local/Remote file inclusion via 'page' param"
+  },
+  {
+    "type": "CSRF",
+    "url": "http://localhost:8010/vulnerabilities/csrf/",
+    "category": "web",
+    "severity": "MEDIUM",
+    "description": "Cross-Site Request Forgery"
+  },
+  {
+    "type": "Brute-Force",
+    "url": "http://localhost:8010/vulnerabilities/brute/",
+    "category": "web",
+    "severity": "MEDIUM",
+    "description": "Login brute force susceptibility"
+  },
+  {
+    "type": "SQLi",
+    "url": "http://localhost:8011/rest/user/login",
+    "category": "web",
+    "severity": "CRITICAL",
+    "description": "Login bypass via SQL injection"
+  },
+  {
+    "type": "XSS-Reflected",
+    "url": "http://localhost:8011/search",
+    "category": "web",
+    "severity": "HIGH",
+    "description": "Reflected XSS via search param"
+  },
+  {
+    "type": "IDOR",
+    "url": "http://localhost:8011/rest/basket/1",
+    "category": "web",
+    "severity": "HIGH",
+    "description": "IDOR \u2014 access other baskets"
+  },
+  {
+    "type": "Broken-Auth",
+    "url": "http://localhost:8011/rest/user/login",
+    "category": "web",
+    "severity": "HIGH",
+    "description": "Weak JWT secret"
+  },
+  {
+    "type": "SSRF",
+    "url": "http://localhost:8011/rest/products/reviews",
+    "category": "web",
+    "severity": "MEDIUM",
+    "description": "Server-Side Request Forgery"
+  },
+  {
+    "type": "Sensitive-Data-Exposure",
+    "url": "http://localhost:8011/ftp/",
+    "category": "web",
+    "severity": "MEDIUM",
+    "description": "Directory listing with backup files"
+  }
+]

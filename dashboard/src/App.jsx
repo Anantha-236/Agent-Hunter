@@ -1,635 +1,523 @@
-import { useState, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  startScan as apiStartScan,
+  getScan,
+  listScans,
+  getSettings,
+  saveSettings,
+  streamScan,
+} from "./api";
 
-// ── DATA ─────────────────────────────────────────────────────────────────────
+/* Deep Void Intelligence UI + real backend wiring */
 
-const PIPELINE_STAGES = [
-  { id: "recon", label: "Passive Recon", substeps: ["WHOIS / DNS lookup", "Subdomain enumeration", "Tech fingerprinting", "Certificate transparency"] },
-  { id: "active", label: "Active Recon", substeps: ["Port scanning", "Service detection", "WAF detection", "Header analysis"] },
-  { id: "fingerprint", label: "Fingerprinting", substeps: ["CMS detection", "Framework version", "Known CVE match", "Config leakage check"] },
-  { id: "rl_select", label: "RL Module Selection", substeps: ["State encoding", "Policy inference", "Module priority rank", "Execution queue build"] },
-  { id: "scan", label: "Vulnerability Scan", substeps: ["XSS probe", "SQLi test", "SSRF check", "Auth bypass", "IDOR test", "Misconfig audit"] },
-  { id: "report", label: "Report Generation", substeps: ["Finding dedup", "CVSS scoring", "PoC generation", "H1 format export"] },
-];
+const PHASE_PROGRESS = {
+  init: 5,
+  recon: 25,
+  strategy: 45,
+  scan: 75,
+  validate: 90,
+  complete: 100,
+};
 
-const TERMINAL_STREAM = [
-  { tag: "info", msg: "Agent-Hunter v2.0 — Autonomous Pentest Agent initialised" },
-  { tag: "info", msg: "Target locked: http://testphp.vulnweb.com" },
-  { tag: "recon", msg: "Starting passive recon — WHOIS query..." },
-  { tag: "recon", msg: "WHOIS: Registrar=GoDaddy, Expiry=2026-03-14, DNSSEC=unsigned" },
-  { tag: "recon", msg: "Subdomain enum via crt.sh + SecurityTrails..." },
-  { tag: "recon", msg: "Found: testphp.vulnweb.com, testhtml5.vulnweb.com, testaspnet.vulnweb.com [!]" },
-  { tag: "warn", msg: "testaspnet.vulnweb.com — OUT OF SCOPE, flagged and skipped" },
-  { tag: "recon", msg: "Tech stack: PHP 5.6, Apache/2.4, MySQL 5.1, no WAF detected" },
-  { tag: "info", msg: "Active recon starting — SYN scan on target..." },
-  { tag: "scan", msg: "Open ports: 80/http, 443/https, 8080/http-alt" },
-  { tag: "scan", msg: "WAF detected: Cloudflare — evasion mode engaged" },
-  { tag: "scan", msg: "Fingerprinting framework versions..." },
-  { tag: "scan", msg: "CVE-2023-44270: PostCSS < 8.4.31 — potential match" },
-  { tag: "info", msg: "RL Agent: encoding environment state..." },
-  { tag: "info", msg: "RL Agent: policy inference complete — module priority: [xss, auth_bypass, idor, sqli]" },
-  { tag: "scan", msg: "XSS scanner activated — probing 47 endpoints..." },
-  { tag: "vuln", msg: "⚡ XSS FOUND: /search?q= — reflected, unfiltered, no CSP" },
-  { tag: "scan", msg: "Auth bypass module — testing 12 auth endpoints..." },
-  { tag: "vuln", msg: "⚡ AUTH BYPASS: /api/v2/user/{id} — IDOR, no ownership check" },
-  { tag: "scan", msg: "SSRF module — testing webhook and redirect params..." },
-  { tag: "scan", msg: "SSRF: no blind SSRF found via webhook endpoint" },
-  { tag: "scan", msg: "SQLi module — 23 injectable params tested..." },
-  { tag: "vuln", msg: "⚡ SQLi FOUND: /api/products?filter= — time-based blind" },
-  { tag: "scan", msg: "Misconfig audit — checking security headers, CORS, cookies..." },
-  { tag: "vuln", msg: "⚡ MISCONFIG: CORS allows wildcard origin on /userinfo.php" },
-  { tag: "ok", msg: "Scan complete — 4 findings. Generating report..." },
-  { tag: "ok", msg: "Report ready: vulnweb_pentest_2026-03-06.pdf" },
-];
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@300;400;500&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body,#root{height:100%;}
+body{font-family:'Outfit',sans-serif;background:#03040a;color:#cbd5e1;overflow:hidden;cursor:default;}
+::-webkit-scrollbar{width:3px;height:3px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:rgba(99,235,215,0.2);border-radius:10px;}
+.aurora{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 80% 50% at 10% 0%,rgba(99,235,215,0.07) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 90% 0%,rgba(167,139,250,0.07) 0%,transparent 60%),radial-gradient(ellipse 40% 30% at 50% 100%,rgba(99,235,215,0.04) 0%,transparent 50%);} 
+.shell{position:relative;z-index:2;display:grid;grid-template-columns:220px 1fr;grid-template-rows:56px 1fr;height:100vh;}
+.topbar{grid-column:1/-1;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(6,8,16,0.85);backdrop-filter:blur(20px);gap:16px;}
+.logo-text{font-family:'Syne',sans-serif;font-weight:800;font-size:15px;letter-spacing:3px;text-transform:uppercase;color:#f1f5f9;}
+.logo-sub{font-family:'JetBrains Mono',monospace;font-size:9px;color:#475569;letter-spacing:2px;margin-top:1px;}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:20px;}
+.status-pill{display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:100px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.03);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1px;color:#94a3b8;}
+.status-pill.active{border-color:rgba(99,235,215,0.3);color:#63ebd7;}
+.dot{width:7px;height:7px;border-radius:50%;background:#475569;}
+.dot.cyan{background:#63ebd7;box-shadow:0 0 8px #63ebd7;animation:dotPulse 2s infinite;}
+@keyframes dotPulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.sidebar{border-right:1px solid rgba(255,255,255,0.07);background:rgba(6,8,16,0.6);backdrop-filter:blur(20px);padding:20px 12px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;border:1px solid transparent;cursor:pointer;transition:all 0.15s;font-family:'Outfit',sans-serif;font-size:13px;font-weight:400;color:#475569;background:transparent;width:100%;text-align:left;}
+.nav-item:hover{color:#cbd5e1;background:rgba(255,255,255,0.03);} .nav-item.active{color:#f1f5f9;background:linear-gradient(135deg,rgba(99,235,215,0.1),rgba(167,139,250,0.08));border-color:rgba(99,235,215,0.15);} .nav-item.active .nav-icon{color:#63ebd7;}
+.nav-icon{font-size:15px;width:18px;text-align:center;flex-shrink:0;}
+.nav-badge{font-family:'JetBrains Mono',monospace;font-size:10px;padding:1px 7px;border-radius:100px;background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.2);}
+.sidebar-section{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:2px;color:#475569;text-transform:uppercase;padding:16px 14px 6px;}
+.sidebar-footer{margin-top:auto;padding:12px 14px;border-top:1px solid rgba(255,255,255,0.07);font-family:'JetBrains Mono',monospace;font-size:9px;color:#475569;letter-spacing:1px;}
+.main{overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:24px;}
+.card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:14px;backdrop-filter:blur(10px);overflow:hidden;}
+.card-lit{border-color:rgba(99,235,215,0.25);background:rgba(99,235,215,0.03);box-shadow:0 0 40px rgba(99,235,215,0.05),inset 0 1px 0 rgba(99,235,215,0.1);} 
+.card-header{padding:16px 22px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;}
+.card-title{font-family:'Syne',sans-serif;font-size:13px;font-weight:600;color:#f1f5f9;letter-spacing:0.5px;} .card-body{padding:20px 22px;}
+.page-title{font-family:'Syne',sans-serif;font-size:26px;font-weight:800;color:#f1f5f9;line-height:1.1;} .page-sub{font-family:'JetBrains Mono',monospace;font-size:11px;color:#475569;margin-top:4px;letter-spacing:1px;} .accent{color:#63ebd7;}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+.stat-tile{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden;}
+.stat-tile::before{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;}
+.stat-tile.crit::before{background:linear-gradient(90deg,#f87171,transparent);} .stat-tile.high::before{background:linear-gradient(90deg,#fbbf24,transparent);} .stat-tile.med::before{background:linear-gradient(90deg,#a78bfa,transparent);} .stat-tile.low::before{background:linear-gradient(90deg,#4ade80,transparent);} 
+.stat-num{font-family:'Syne',sans-serif;font-size:36px;font-weight:800;line-height:1;margin-bottom:6px;} .stat-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all 0.15s;white-space:nowrap;}
+.btn-ghost{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);color:#94a3b8;} .btn-ghost:hover{background:rgba(255,255,255,0.06);color:#cbd5e1;}
+.btn-solid{background:linear-gradient(135deg,#63ebd7,#2dd4bf);color:#000;font-weight:600;border:none;} .btn-solid:hover{box-shadow:0 0 30px rgba(99,235,215,0.3);}
+.btn-danger{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);color:#f87171;}
+.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;letter-spacing:0.5px;white-space:nowrap;}
+.badge-CRITICAL{background:rgba(248,113,113,0.12);color:#f87171;border:1px solid rgba(248,113,113,0.25);} .badge-HIGH{background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.25);} .badge-MEDIUM{background:rgba(167,139,250,0.12);color:#a78bfa;border:1px solid rgba(167,139,250,0.25);} .badge-LOW,.badge-INFO{background:rgba(74,222,128,0.12);color:#4ade80;border:1px solid rgba(74,222,128,0.25);} 
+.chip{display:inline-block;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);color:#475569;}
+.progress-track{height:4px;border-radius:2px;background:rgba(255,255,255,0.06);overflow:hidden;} .progress-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,#63ebd7,#a78bfa);transition:width 0.4s ease;}
+.field{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:11px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;color:#cbd5e1;outline:none;} .field::placeholder{color:#475569;}
+.field-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#475569;margin-bottom:7px;display:block;}
+.toggle-wrap{width:42px;height:24px;position:relative;cursor:pointer;} .toggle-track{width:100%;height:100%;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.07);} .toggle-wrap.on .toggle-track{background:rgba(99,235,215,0.2);border-color:rgba(99,235,215,0.4);} .toggle-thumb{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#475569;transition:transform 0.2s,background 0.2s;} .toggle-wrap.on .toggle-thumb{transform:translateX(18px);background:#63ebd7;}
+.module-card{padding:16px 18px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.03);display:flex;align-items:center;gap:14px;cursor:pointer;} .module-card.on{border-color:rgba(99,235,215,0.2);background:rgba(99,235,215,0.04);} 
+.finding-row{display:grid;grid-template-columns:90px 1fr 80px 100px;align-items:center;gap:12px;padding:13px 22px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.07);} .finding-row:hover{background:rgba(255,255,255,0.03);} .finding-row.selected{background:rgba(99,235,215,0.04);} 
+.find-name{font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;color:#f1f5f9;} .find-loc{font-family:'JetBrains Mono',monospace;font-size:10px;color:#475569;margin-top:2px;}
+.terminal{background:rgba(3,4,10,0.9);border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.07);} .terminal-bar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.02);} .t-dot{width:10px;height:10px;border-radius:50%;} .terminal-body{padding:14px 16px;height:280px;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:2;} .t-line{display:flex;gap:10px;} .t-ts{color:#475569;flex-shrink:0;}
+.tab-filter{display:flex;gap:2px;border-bottom:1px solid rgba(255,255,255,0.07);padding:0 22px;} .tab-btn{padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#475569;cursor:pointer;border:none;background:transparent;} .tab-btn.active{color:#f1f5f9;border-bottom:2px solid #63ebd7;}
+.detail-panel{background:rgba(99,235,215,0.03);border:1px solid rgba(99,235,215,0.15);border-radius:10px;padding:20px 22px;} .detail-title{font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:8px;} .detail-desc{font-size:13px;color:#cbd5e1;line-height:1.7;}
+.setting-row{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.07);} .setting-row:last-child{border-bottom:none;} .setting-name{font-size:13px;color:#cbd5e1;font-weight:500;} .setting-desc{font-size:11px;color:#475569;margin-top:2px;font-family:'JetBrains Mono',monospace;}
+.cov-row{margin-bottom:14px;} .cov-label{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:#475569;margin-bottom:6px;letter-spacing:1px;text-transform:uppercase;} .cov-label span:last-child{color:#63ebd7;}
+@media (max-width: 980px){.shell{grid-template-columns:1fr;grid-template-rows:56px auto 1fr}.sidebar{border-right:none;border-bottom:1px solid rgba(255,255,255,0.07);padding:10px}.main{padding:18px}.stat-grid{grid-template-columns:1fr 1fr}.finding-row{grid-template-columns:80px 1fr}.finding-row .chip,.finding-row span:last-child{display:none}}
+`;
 
-const FINDINGS = [
-  { title: "Reflected XSS — Search Endpoint", sev: "high", url: "/search.php?test=<script>", desc: "Unfiltered user input reflected in DOM. No CSP header present. Exploitable for session hijack.", module: "xss_scanner" },
-  { title: "IDOR — User Info Endpoint", sev: "critical", url: "/userinfo.php?id=1", desc: "Unauthenticated access to arbitrary user profiles by iterating numeric ID. No access control.", module: "auth_bypass" },
-  { title: "Time-Based Blind SQLi", sev: "critical", url: "/listproducts.php?cat=1", desc: "Category parameter unsanitised. SLEEP(5) payload causes 5s delay confirming MySQL injection.", module: "injection_sqli" },
-  { title: "CORS Wildcard on User Info", sev: "medium", url: "/userinfo.php", desc: "Access-Control-Allow-Origin: * allows any origin to read user data cross-domain.", module: "misconfig_scanner" },
-  { title: "Missing Security Headers", sev: "low", url: "http://testphp.vulnweb.com", desc: "X-Frame-Options, X-Content-Type-Options, and Referrer-Policy headers absent on all responses.", module: "misconfig_scanner" },
-];
-
-const COMPLIANCE_ITEMS = [
-  { id: "identity", title: "Identity Verification", desc: "Government-issued ID or corporate email domain verified. Operator identity logged against this session." },
-  { id: "noc", title: "No-Objection Certificate (NOC)", desc: "Written NOC from target organisation's security/legal team. Upload signed PDF below." },
-  { id: "nda", title: "Non-Disclosure Agreement (NDA)", desc: "Mutual NDA covering findings confidentiality, responsible disclosure timeline, and liability." },
-  { id: "scope", title: "Scope Confirmation", desc: "In-scope and out-of-scope assets explicitly defined and locked before any scanning begins." },
-  { id: "legal", title: "Legal Disclaimer Acceptance", desc: "Operator accepts full legal responsibility for this engagement. AgentiAI is a tool, not a legal entity." },
-];
-
-// ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
-
-function CheckIcon({ size = 12 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none">
-      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+function toHexColor(msg) {
+  const m = (msg || "").toLowerCase();
+  if (m.includes("critical")) return "#f87171";
+  if (m.includes("high")) return "#fbbf24";
+  if (m.includes("medium")) return "#a78bfa";
+  if (m.includes("complete") || m.includes("started") || m.includes("scan")) return "#63ebd7";
+  return "#94a3b8";
 }
 
-function Logo() {
+function normalizeFinding(raw, idx) {
+  const sev = (raw.severity || "LOW").toUpperCase();
+  const cat = (raw.module || "unknown").toLowerCase();
+  return {
+    id: raw.id || idx + 1,
+    type: raw.title || raw.vuln_type || "Finding",
+    loc: raw.url || "",
+    sev,
+    cat,
+    cve: raw.cwe_id || "N/A",
+    ts: (raw.discovered_at || "").slice(11, 19) || "--:--:--",
+    desc: raw.description || "No description",
+  };
+}
+
+function Toggle({ on, onChange }) {
   return (
-    <div className="logo">
-      <div className="logo-icon">
-        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M8 1L14 4.5V11.5L8 15L2 11.5V4.5L8 1Z" stroke="#000" strokeWidth="1.5" strokeLinejoin="round" />
-          <path d="M8 5L11 6.75V10.25L8 12L5 10.25V6.75L8 5Z" fill="#000" />
-        </svg>
-      </div>
-      Agent-<span>Hunter</span>
+    <div className={`toggle-wrap ${on ? "on" : ""}`} onClick={() => onChange(!on)}>
+      <div className="toggle-track" />
+      <div className="toggle-thumb" />
     </div>
   );
 }
 
-function WizardSteps({ current }) {
-  const steps = ["Identity & Auth", "Pre-Engagement", "Mission Config", "Agent Running", "Report"];
-  return (
-    <div className="wizard-steps">
-      {steps.map((s, i) => (
-        <div key={s} className="wizard-step">
-          <div className={`step-dot ${i < current ? "done" : i === current ? "active" : "pending"}`}>
-            {i < current ? <CheckIcon size={11} /> : i + 1}
-          </div>
-          <span className={`step-label ${i === current ? "active" : ""}`}>{s}</span>
-          {i < steps.length - 1 && <div className={`step-line ${i < current ? "done" : ""}`} />}
-        </div>
-      ))}
-    </div>
-  );
+function Badge({ s }) {
+  return <span className={`badge badge-${s}`}>{s}</span>;
 }
 
-// ── SCREEN 1: AUTH ────────────────────────────────────────────────────────────
-
-function AuthScreen({ onAuth }) {
-  const [email, setEmail] = useState("");
-  const [org, setOrg] = useState("");
-  const [agreed, setAgreed] = useState(false);
-
-  return (
-    <div className="auth-screen">
-      <div className="auth-grid" />
-      <div className="auth-glow" />
-      <div className="auth-box">
-        <div className="auth-logo">
-          <Logo />
-          <h1 style={{ marginTop: 16 }}>
-            Agent-<span style={{ color: "var(--amber)" }}>Hunter</span>
-          </h1>
-          <p>Autonomous Vulnerability Intelligence Platform</p>
-          <div style={{ marginTop: 10 }}>
-            <Link
-              to="/blueprint"
-              style={{ color: "var(--text3)", textDecoration: "none", fontSize: 10, border: "1px solid var(--border2)", padding: "3px 10px", borderRadius: 20, letterSpacing: 1 }}
-            >
-              VIEW ARCHITECTURE BLUEPRINT →
-            </Link>
-          </div>
-        </div>
-
-        <div className="auth-warning">
-          <strong>⚠ AUTHORISED USE ONLY</strong>
-          Only use Agent-Hunter against targets you own or have explicit written
-          permission to test. All sessions are logged and audited.
-        </div>
-
-        <div className="card">
-          <div className="form-row">
-            <label className="label">Professional Email</label>
-            <input className="input" placeholder="you@organisation.com" value={email} onChange={e => setEmail(e.target.value)} />
-          </div>
-          <div className="form-row">
-            <label className="label">Organisation / Company</label>
-            <input className="input" placeholder="ACME Security Ltd." value={org} onChange={e => setOrg(e.target.value)} />
-          </div>
-          <div
-            style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 20, cursor: "pointer" }}
-            onClick={() => setAgreed(!agreed)}
-          >
-            <div className={`check-box ${agreed ? "checked" : ""}`} style={{ marginTop: 2 }}>
-              {agreed && <CheckIcon />}
-            </div>
-            <span style={{ fontSize: 12, color: "var(--text2)", lineHeight: 1.6 }}>
-              I confirm I am a <strong style={{ color: "var(--text)" }}>security professional</strong> and
-              will only use Agent-Hunter against systems I am authorised to test.
-            </span>
-          </div>
-          <button
-            className="btn btn-primary"
-            style={{ width: "100%", justifyContent: "center" }}
-            disabled={!email || !org || !agreed}
-            onClick={() => onAuth({ email, org })}
-          >
-            Continue to Pre-Engagement →
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── SCREEN 2: PRE-ENGAGEMENT ──────────────────────────────────────────────────
-
-function PreEngagementScreen({ user, onComplete }) {
-  const [checked, setChecked] = useState({});
-  const [nocFile, setNocFile] = useState(null);
-  const [ndaFile, setNdaFile] = useState(null);
-
-  const toggle = (id) => setChecked((p) => ({ ...p, [id]: !p[id] }));
-  const allDone = COMPLIANCE_ITEMS.every((i) => checked[i.id]) && nocFile && ndaFile;
+function Dashboard({ onNavigate, scanning, findings, scanTarget }) {
+  const crit = findings.filter((f) => f.sev === "CRITICAL").length;
+  const high = findings.filter((f) => f.sev === "HIGH").length;
+  const med = findings.filter((f) => f.sev === "MEDIUM").length;
+  const low = findings.filter((f) => f.sev === "LOW" || f.sev === "INFO").length;
+  const cats = ["web", "network", "sast", "dependency"];
 
   return (
-    <div className="screen">
-      <div className="header">
-        <Logo />
-        <div className="header-right">
-          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text2)" }}>{user.email}</span>
-          <span className="badge badge-warn">PRE-ENGAGEMENT</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div className="page-title">Threat <span className="accent">Overview</span></div>
+          <div className="page-sub">Last scan target · {scanTarget || "N/A"}</div>
         </div>
+        <button className="btn btn-solid" onClick={() => onNavigate("scan")}>▶ New Scan</button>
       </div>
 
-      <WizardSteps current={1} />
-
-      <div className="wizard-body">
-        <div className="section-title">Pre-Engagement Compliance</div>
-        <div className="section-sub">All checks must be completed before any scanning is permitted.</div>
-
-        {COMPLIANCE_ITEMS.map((item) => (
-          <div
-            key={item.id}
-            className={`compliance-item ${checked[item.id] ? "checked" : ""}`}
-            onClick={() => toggle(item.id)}
-          >
-            <div className="check-box">{checked[item.id] && <CheckIcon />}</div>
-            <div>
-              <div className="compliance-title">{item.title}</div>
-              <div className="compliance-desc">{item.desc}</div>
-            </div>
+      <div className="stat-grid">
+        {[
+          { n: crit, label: "Critical", cls: "crit", color: "#f87171" },
+          { n: high, label: "High", cls: "high", color: "#fbbf24" },
+          { n: med, label: "Medium", cls: "med", color: "#a78bfa" },
+          { n: low, label: "Low", cls: "low", color: "#4ade80" },
+        ].map(({ n, label, cls, color }) => (
+          <div key={label} className={`stat-tile ${cls}`}>
+            <div className="stat-num" style={{ color }}>{n}</div>
+            <div className="stat-label" style={{ color }}>{label}</div>
           </div>
         ))}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
-          <div>
-            <label className="label">Upload NOC (PDF)</label>
-            <div className={`upload-zone ${nocFile ? "done" : ""}`} onClick={() => setNocFile("noc_signed.pdf")}>
-              <div className="upload-icon">{nocFile ? "✅" : "📄"}</div>
-              <div className="upload-text">{nocFile || "Click to upload signed NOC"}</div>
-            </div>
-          </div>
-          <div>
-            <label className="label">Upload NDA (PDF)</label>
-            <div className={`upload-zone ${ndaFile ? "done" : ""}`} onClick={() => setNdaFile("nda_signed.pdf")}>
-              <div className="upload-icon">{ndaFile ? "✅" : "📄"}</div>
-              <div className="upload-text">{ndaFile || "Click to upload signed NDA"}</div>
-            </div>
-          </div>
-        </div>
       </div>
 
-      <div className="wizard-footer">
-        <div style={{ fontSize: 12, color: "var(--text3)", fontFamily: "var(--mono)" }}>
-          {Object.values(checked).filter(Boolean).length}/{COMPLIANCE_ITEMS.length} checks completed
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Module Coverage</div>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569" }}>{findings.length} FINDINGS</span>
         </div>
-        <button className="btn btn-primary" disabled={!allDone} onClick={onComplete}>
-          Proceed to Mission Config →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── SCREEN 3: MISSION CONFIG ──────────────────────────────────────────────────
-
-function MissionScreen({ onLaunch }) {
-  const [target, setTarget] = useState("http://testphp.vulnweb.com");
-  const [inScope, setInScope] = useState(["testphp.vulnweb.com", "testhtml5.vulnweb.com"]);
-  const [outScope, setOutScope] = useState(["testaspnet.vulnweb.com", "testasp.vulnweb.com"]);
-  const [inInput, setInInput] = useState("");
-  const [outInput, setOutInput] = useState("");
-  const [instructions, setInstructions] = useState(
-    "Focus on web application endpoints. Test all input parameters for injection flaws. This is a deliberately vulnerable test application — full-intensity scanning is permitted. Document all findings with PoC evidence."
-  );
-  const [intensity, setIntensity] = useState("normal");
-
-  const addTag = (list, setList, val, setVal) => {
-    if (val.trim()) {
-      setList([...list, val.trim()]);
-      setVal("");
-    }
-  };
-
-  return (
-    <div className="screen">
-      <div className="header">
-        <Logo />
-        <div className="header-right">
-          <span className="badge badge-ok">COMPLIANCE ✓</span>
-          <span className="badge badge-warn">MISSION CONFIG</span>
-        </div>
-      </div>
-
-      <WizardSteps current={2} />
-
-      <div className="wizard-body" style={{ maxWidth: 780 }}>
-        <div className="section-title">Mission Configuration</div>
-        <div className="section-sub">Define the engagement target, scope boundaries, and agent behaviour.</div>
-
-        <div className="form-row">
-          <label className="label">Primary Target URL / IP</label>
-          <input className="input" value={target} onChange={(e) => setTarget(e.target.value)} />
-        </div>
-
-        <div className="form-grid" style={{ marginBottom: 18 }}>
-          <div>
-            <label className="label">✅ In Scope</label>
-            <div className="tag-input-row">
-              <input
-                className="input"
-                placeholder="e.g. api.target.com"
-                value={inInput}
-                onChange={(e) => setInInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addTag(inScope, setInScope, inInput, setInInput)}
-              />
-              <button className="btn btn-ghost btn-sm" onClick={() => addTag(inScope, setInScope, inInput, setInInput)}>+</button>
-            </div>
-            <div className="tag-list">
-              {inScope.map((t) => (
-                <span key={t} className="tag tag-in">
-                  {t} <span className="tag-x" onClick={() => setInScope(inScope.filter((x) => x !== t))}>×</span>
-                </span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="label">🚫 Out of Scope</label>
-            <div className="tag-input-row">
-              <input
-                className="input"
-                placeholder="e.g. internal.target.com"
-                value={outInput}
-                onChange={(e) => setOutInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addTag(outScope, setOutScope, outInput, setOutInput)}
-              />
-              <button className="btn btn-ghost btn-sm" onClick={() => addTag(outScope, setOutScope, outInput, setOutInput)}>+</button>
-            </div>
-            <div className="tag-list">
-              {outScope.map((t) => (
-                <span key={t} className="tag tag-out">
-                  {t} <span className="tag-x" onClick={() => setOutScope(outScope.filter((x) => x !== t))}>×</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="form-row">
-          <label className="label">Customer Instructions</label>
-          <textarea className="input" value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} />
-        </div>
-
-        <div className="form-row">
-          <label className="label">Scan Intensity</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            {["passive", "normal", "aggressive"].map((i) => (
-              <button
-                key={i}
-                className={`btn ${intensity === i ? "btn-primary" : "btn-ghost"} btn-sm`}
-                style={{ textTransform: "capitalize" }}
-                onClick={() => setIntensity(i)}
-              >
-                {i}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="form-row">
-          <label className="label">Active AI Models</label>
-          <div className="model-row">
-            {["Recon-LLM", "Fingerprint-CNN", "RL-Policy", "Exploit-GPT", "Report-Writer"].map((m) => (
-              <span key={m} className="model-badge active">
-                <span className="model-dot" /> {m}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="wizard-footer">
-        <div style={{ fontSize: 12, color: "var(--text3)", fontFamily: "var(--mono)" }}>
-          All pre-engagement checks passed · Session ID: AGT-2024-{Math.random().toString(36).slice(2, 8).toUpperCase()}
-        </div>
-        <button
-          className="btn btn-primary"
-          disabled={!target || inScope.length === 0}
-          onClick={() => onLaunch({ target, inScope, outScope, instructions, intensity })}
-        >
-          🚀 Launch Agent
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── SCREEN 4: AGENT DASHBOARD ─────────────────────────────────────────────────
-
-function DashboardScreen({ mission }) {
-  const [tick, setTick] = useState(0);
-  const [logLines, setLogLines] = useState([]);
-  const [findings, setFindings] = useState([]);
-  const [stats, setStats] = useState({ critical: 0, high: 0, medium: 0, low: 0, info: 0, urls: 0 });
-  const [done, setDone] = useState(false);
-  const termRef = useRef(null);
-  const lineRef = useRef(0);
-  const findRef = useRef(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTick((t) => {
-        const next = t + 1;
-        // Add terminal lines
-        if (lineRef.current < TERMINAL_STREAM.length) {
-          const line = TERMINAL_STREAM[lineRef.current];
-          setLogLines((l) => [...l, { ...line, time: new Date().toLocaleTimeString("en-GB", { hour12: false }) }]);
-          lineRef.current++;
-        }
-        // Add findings progressively
-        if (next === 12 && findRef.current < FINDINGS.length) {
-          const f = FINDINGS[findRef.current];
-          setFindings((arr) => [...arr, f]);
-          setStats((s) => ({ ...s, [f.sev]: (s[f.sev] || 0) + 1 }));
-          findRef.current++;
-        }
-        if (next > 14 && findRef.current < FINDINGS.length) {
-          const f = FINDINGS[findRef.current];
-          setFindings((arr) => [...arr, f]);
-          setStats((s) => ({ ...s, [f.sev]: (s[f.sev] || 0) + 1 }));
-          findRef.current++;
-        }
-        setStats((s) => ({ ...s, urls: Math.min(s.urls + 7, 347) }));
-        if (next >= 28) {
-          setDone(true);
-          clearInterval(timer);
-        }
-        return next;
-      });
-    }, 600);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight;
-  }, [logLines]);
-
-  const getStageState = (idx) => {
-    const thresholds = [0, 4, 8, 12, 14, 26];
-    if (tick >= thresholds[idx + 1]) return "done";
-    if (tick >= thresholds[idx]) return "active";
-    return "queued";
-  };
-
-  const getProgress = (idx) => {
-    const thresholds = [0, 4, 8, 12, 14, 26];
-    const start = thresholds[idx],
-      end = thresholds[idx + 1];
-    if (tick >= end) return 100;
-    if (tick < start) return 0;
-    return Math.round(((tick - start) / (end - start)) * 100);
-  };
-
-  return (
-    <div className="screen">
-      <div className="header">
-        <Logo />
-        <div style={{ display: "flex", alignItems: "center", gap: 12, fontFamily: "var(--mono)", fontSize: 11, color: "var(--text2)" }}>
-          <span>
-            Target: <strong style={{ color: "var(--text)" }}>{mission.target}</strong>
-          </span>
-        </div>
-        <div className="header-right">
-          {done ? <span className="badge badge-ok">SCAN COMPLETE</span> : <span className="badge badge-warn">● SCANNING</span>}
-          <Link
-            to="/blueprint"
-            style={{ color: "var(--text3)", textDecoration: "none", fontSize: 10, border: "1px solid var(--border2)", padding: "3px 10px", borderRadius: 20, letterSpacing: 1, transition: "all 0.2s" }}
-          >
-            BLUEPRINT →
-          </Link>
-        </div>
-      </div>
-
-      <WizardSteps current={3} />
-
-      <div className="stats-bar">
-        <div className="stat">
-          <div className="stat-val red">{stats.critical}</div>
-          <div className="stat-lbl">Critical</div>
-        </div>
-        <div className="stat">
-          <div className="stat-val orange">{stats.high}</div>
-          <div className="stat-lbl">High</div>
-        </div>
-        <div className="stat">
-          <div className="stat-val amber">{stats.medium}</div>
-          <div className="stat-lbl">Medium</div>
-        </div>
-        <div className="stat">
-          <div className="stat-val green">{stats.low + stats.info}</div>
-          <div className="stat-lbl">Low/Info</div>
-        </div>
-        <div className="stat">
-          <div className="stat-val blue">{stats.urls}</div>
-          <div className="stat-lbl">URLs Tested</div>
-        </div>
-      </div>
-
-      <div className="target-bar">
-        <div className="target-item">
-          🎯 <strong>{mission.target}</strong>
-        </div>
-        <div className="target-item">
-          ✅ In-scope: <strong>{mission.inScope.join(", ")}</strong>
-        </div>
-        <div className="target-item">
-          🚫 Out-scope: <strong>{mission.outScope.join(", ")}</strong>
-        </div>
-        <div className="target-item" style={{ marginLeft: "auto" }}>
-          Intensity: <strong style={{ color: "var(--amber)", textTransform: "capitalize" }}>{mission.intensity}</strong>
-        </div>
-      </div>
-
-      <div className="dashboard">
-        {/* Pipeline */}
-        <div className="pipeline-panel">
-          <div className="panel-title">Agent Pipeline</div>
-          {PIPELINE_STAGES.map((stage, idx) => {
-            const state = getStageState(idx);
-            const progress = getProgress(idx);
+        <div className="card-body">
+          {cats.map((cat) => {
+            const n = findings.filter((f) => f.cat.includes(cat)).length;
+            const pct = findings.length ? (n / findings.length) * 100 : 0;
             return (
-              <div key={stage.id} className={`pipeline-stage ${state}`}>
-                <div className="stage-header">
-                  <span className="stage-name">{stage.label}</span>
-                  <span className={`stage-status ${state}`}>
-                    {state === "done" ? "✓ done" : state === "active" ? "running..." : "queued"}
-                  </span>
-                </div>
-                <div className="stage-progress">
-                  <div
-                    className={`stage-progress-bar ${state === "done" ? "green" : "amber"}`}
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-                {state === "active" && (
-                  <div className="stage-substeps">
-                    {stage.substeps.map((s, si) => {
-                      const doneIdx = Math.floor(progress / (100 / stage.substeps.length));
-                      return (
-                        <div key={s} className={`substep ${si < doneIdx ? "done" : si === doneIdx ? "active" : ""}`}>
-                          <div className={`dot-indicator ${si < doneIdx ? "green" : si === doneIdx ? "amber" : "gray"}`} />
-                          {s}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <div key={cat} className="cov-row">
+                <div className="cov-label"><span>{cat}</span><span>{n} findings</span></div>
+                <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%` }} /></div>
               </div>
             );
           })}
         </div>
+      </div>
 
-        {/* Terminal */}
-        <div className="terminal-panel">
-          <div className="panel-title" style={{ marginBottom: 10 }}>Agent Log</div>
-          <div className="terminal">
-            <div className="terminal-bar">
-              <div className="t-dot" style={{ background: "#ff5f57" }} />
-              <div className="t-dot" style={{ background: "#febc2e" }} />
-              <div className="t-dot" style={{ background: "#28c840" }} />
-              <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text3)", marginLeft: 8 }}>
-                agent-hunter — autonomous scan session
-              </span>
-            </div>
-            <div className="terminal-body" ref={termRef}>
-              {logLines.map((line, i) => (
-                <div key={i} className="t-line">
-                  <span className="t-time">{line.time}</span>
-                  <span className={`t-tag ${line.tag}`}>{line.tag.toUpperCase()}</span>
-                  <span
-                    className={`t-msg ${line.tag === "vuln" ? "amber" : line.tag === "ok" ? "green" : line.tag === "warn" ? "red" : ""}`}
-                  >
-                    {line.msg}
-                  </span>
-                </div>
-              ))}
-              {!done && (
-                <div className="t-line">
-                  <span className="t-time">--:--:--</span>
-                  <span className="t-tag info">INFO</span>
-                  <span className="t-msg dim">█ scanning...</span>
-                </div>
-              )}
-            </div>
-          </div>
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Critical Findings</div>
+          <button className="btn btn-ghost" style={{ padding: "5px 12px", fontSize: 11 }} onClick={() => onNavigate("findings")}>View all →</button>
         </div>
+        {findings.filter((f) => f.sev === "CRITICAL").slice(0, 6).map((f) => (
+          <div key={f.id} className="finding-row">
+            <Badge s={f.sev} />
+            <div><div className="find-name">{f.type}</div><div className="find-loc">{f.loc}</div></div>
+            <span className="chip">{f.cat}</span>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#a78bfa" }}>{f.cve}</span>
+          </div>
+        ))}
+        {!findings.length && <div style={{ padding: 22, color: "#475569", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>No findings yet.</div>}
+      </div>
+    </div>
+  );
+}
 
-        {/* Findings */}
-        <div className="findings-panel">
-          <div className="panel-title">Live Findings ({findings.length})</div>
-          {findings.length === 0 && (
-            <div style={{ color: "var(--text3)", fontFamily: "var(--mono)", fontSize: 11, marginTop: 20, textAlign: "center" }}>
-              No findings yet...
-            </div>
-          )}
-          {findings.map((f, i) => (
-            <div key={i} className="finding-card">
-              <div className="finding-header">
-                <span className="finding-title">{f.title}</span>
-                <span className={`sev sev-${f.sev}`}>{f.sev.toUpperCase()}</span>
-              </div>
-              <div className="finding-url">{f.url}</div>
-              <div className="finding-desc">{f.desc}</div>
-              <div className="finding-module">via {f.module}</div>
+function ScanPage({ onLaunch }) {
+  const [url, setUrl] = useState("");
+  const [modules, setModules] = useState({ web: true, sast: true, dependency: true, network: false });
+  const [depth, setDepth] = useState("medium");
+  const [threads, setThreads] = useState("4");
+  const toggle = (k) => setModules((m) => ({ ...m, [k]: !m[k] }));
+  const mods = [
+    { k: "web", icon: "🌐", label: "Web App", desc: "XSS · SQLi · CSRF · SSRF · IDOR" },
+    { k: "sast", icon: "🔍", label: "Code (SAST)", desc: "Secrets · patterns · weak crypto" },
+    { k: "dependency", icon: "📦", label: "Dependencies", desc: "CVE / NVD package audit" },
+    { k: "network", icon: "📡", label: "Network", desc: "Port scanning · service detection" },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div><div className="page-title">Configure <span className="accent">Scan</span></div><div className="page-sub">Define target · select modules · set parameters</div></div>
+      <div className="card card-lit"><div className="card-body">
+        <label className="field-label">Target URL</label>
+        <div style={{ display: "flex", gap: 10 }}>
+          <input className="field" placeholder="https://target.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <button
+            className="btn btn-solid"
+            style={{ flexShrink: 0 }}
+            onClick={() => {
+              const enabled = Object.entries(modules).filter(([, v]) => v).map(([k]) => k);
+              if (!url || !enabled.length) return;
+              onLaunch({ url, modules: enabled, depth, threads: Number(threads) });
+            }}
+          >
+            Launch ▶
+          </button>
+        </div>
+      </div></div>
+
+      <div className="card">
+        <div className="card-header"><div className="card-title">Scan Modules</div></div>
+        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {mods.map(({ k, icon, label, desc }) => (
+            <div key={k} className={`module-card ${modules[k] ? "on" : ""}`} onClick={() => toggle(k)}>
+              <div style={{ width: 38, height: 38, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>{icon}</div>
+              <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div><div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>{desc}</div></div>
+              <Toggle on={modules[k]} onChange={() => toggle(k)} />
             </div>
           ))}
-          {done && (
-            <div style={{ marginTop: 8 }}>
-              <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>
-                📄 Export Full Report
-              </button>
-            </div>
-          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><div className="card-title">Parameters</div></div>
+        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div><label className="field-label">Scan Depth</label><select className="field" value={depth} onChange={(e) => setDepth(e.target.value)}><option value="light">Light</option><option value="medium">Medium</option><option value="deep">Deep</option></select></div>
+          <div><label className="field-label">Worker Threads</label><select className="field" value={threads} onChange={(e) => setThreads(e.target.value)}>{["1", "2", "4", "8", "16"].map((t) => <option key={t}>{t}</option>)}</select></div>
         </div>
       </div>
     </div>
   );
 }
 
-// ── APP ROOT ──────────────────────────────────────────────────────────────────
+function LivePage({ running, progress, logs }) {
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [logs]);
 
-export default function App() {
-  const [screen, setScreen] = useState("auth");
-  const [user, setUser] = useState(null);
-  const [mission, setMission] = useState(null);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div><div className="page-title">Live <span className="accent">Scanner</span></div><div className="page-sub">Real-time scan telemetry</div></div>
+        <div className={`status-pill ${running ? "active" : ""}`}><div className={`dot ${running ? "cyan" : ""}`} />{running ? "SCANNING" : progress === 100 ? "COMPLETE" : "IDLE"}</div>
+      </div>
+
+      <div className={`card ${running || progress > 0 ? "card-lit" : ""}`}><div className="card-body">
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#475569" }}>{running ? "Scanning..." : progress === 100 ? "Scan complete" : "Awaiting target"}</span>
+          <span style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, fontWeight: 800, color: "#63ebd7" }}>{progress}%</span>
+        </div>
+        <div className="progress-track" style={{ height: 6, borderRadius: 3 }}><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
+      </div></div>
+
+      <div className="terminal">
+        <div className="terminal-bar">
+          <div className="t-dot" style={{ background: "#ff5f57" }} /><div className="t-dot" style={{ background: "#ffbd2e" }} /><div className="t-dot" style={{ background: "#28ca41" }} />
+          <span style={{ marginLeft: 8, fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", letterSpacing: 1 }}>agent-hunter · output</span>
+        </div>
+        <div className="terminal-body" ref={ref}>
+          {logs.map((l, i) => <div key={`${l.t}-${i}`} className="t-line"><span className="t-ts">[{l.t}]</span><span style={{ color: l.c }}>{l.m}</span></div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FindingsPage({ findings }) {
+  const [catF, setCatF] = useState("all");
+  const [sevF, setSevF] = useState("all");
+  const [sel, setSel] = useState(null);
+  const cats = ["all", "web", "network", "sast", "dependency"];
+  const sevs = ["all", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+  const filtered = findings.filter((f) => (catF === "all" || f.cat.includes(catF)) && (sevF === "all" || f.sev === sevF));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div><div className="page-title">Findings <span className="accent">Report</span></div><div className="page-sub">{filtered.length} of {findings.length} findings shown</div></div>
+        <button
+          className="btn btn-ghost"
+          onClick={() => {
+            const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "findings.json";
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
+        >
+          ⬇ Export JSON
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="tab-filter" style={{ borderBottom: "none", padding: 0, gap: 4 }}>
+          {cats.map((c) => <button key={c} className={`tab-btn ${catF === c ? "active" : ""}`} style={{ padding: "7px 12px" }} onClick={() => setCatF(c)}>{c.toUpperCase()}</button>)}
+        </div>
+        <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          {sevs.map((s) => <button key={s} className={`btn ${sevF === s ? "btn-solid" : "btn-ghost"}`} style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSevF(s)}>{s}</button>)}
+        </div>
+      </div>
+
+      <div className="card">
+        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 80px 100px", gap: 12, padding: "10px 22px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          {["Severity", "Finding", "Category", "CVE / CWE"].map((h) => <span key={h} style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, letterSpacing: 2, textTransform: "uppercase", color: "#475569" }}>{h}</span>)}
+        </div>
+        {filtered.map((f) => (
+          <div key={f.id} className={`finding-row ${sel?.id === f.id ? "selected" : ""}`} onClick={() => setSel(sel?.id === f.id ? null : f)}>
+            <Badge s={f.sev} />
+            <div><div className="find-name">{f.type}</div><div className="find-loc">{f.loc}</div></div>
+            <span className="chip">{f.cat}</span>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#a78bfa" }}>{f.cve}</span>
+          </div>
+        ))}
+      </div>
+
+      {sel && (
+        <div className="detail-panel">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><Badge s={sel.sev} /><span className="chip">{sel.cat}</span><span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginLeft: "auto" }}>{sel.ts}</span></div>
+          <div className="detail-title">{sel.type}</div>
+          <div className="detail-desc">{sel.desc}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsPage({ config, onSave }) {
+  const [cfg, setCfg] = useState(config);
+  useEffect(() => setCfg(config), [config]);
+  const set = (k, v) => setCfg((p) => ({ ...p, [k]: v }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div><div className="page-title">Agent <span className="accent">Settings</span></div><div className="page-sub">Configure scanner behaviour and preferences</div></div>
+      <div className="card">
+        <div className="card-header"><div className="card-title">Request Configuration</div></div>
+        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          {[{ k: "timeout", label: "Timeout (seconds)" }, { k: "rateLimit", label: "Rate limit (req/s)" }, { k: "userAgent", label: "User-Agent string", span: 2 }, { k: "proxy", label: "Proxy URL (optional)", span: 2 }, { k: "outputDir", label: "Output directory", span: 2 }].map(({ k, label, span }) => (
+            <div key={k} style={{ gridColumn: span ? `span ${span}` : "span 1" }}><label className="field-label">{label}</label><input className="field" value={cfg[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></div>
+          ))}
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-header"><div className="card-title">Behaviour</div></div>
+        <div className="card-body">
+          {[{ k: "autoReport", name: "Auto-generate report", desc: "Save report after every scan" }, { k: "verifySsl", name: "Verify SSL certificates", desc: "Reject invalid TLS certs" }, { k: "followRedirects", name: "Follow redirects", desc: "Auto-follow HTTP 3xx" }, { k: "saveLogs", name: "Persist terminal logs", desc: "Write logs to output directory" }].map(({ k, name, desc }) => (
+            <div key={k} className="setting-row"><div><div className="setting-name">{name}</div><div className="setting-desc">{desc}</div></div><Toggle on={!!cfg[k]} onChange={(v) => set(k, v)} /></div>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button className="btn btn-danger" onClick={() => setCfg({ timeout: 30, userAgent: "AgentHunter/2.1", rateLimit: 10, proxy: "", outputDir: "./results", autoReport: true, verifySsl: true, followRedirects: true, saveLogs: true })}>Reset defaults</button>
+        <button className="btn btn-solid" onClick={() => onSave(cfg)}>Save settings</button>
+      </div>
+    </div>
+  );
+}
+
+export default function AgentHunter() {
+  const [page, setPage] = useState("dashboard");
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [logs, setLogs] = useState([]);
+  const [findings, setFindings] = useState([]);
+  const [scanTarget, setScanTarget] = useState("");
+  const [scanId, setScanId] = useState(null);
+  const [settings, setSettings] = useState({ timeout: 30, userAgent: "AgentHunter/2.1", rateLimit: 10, proxy: "", outputDir: "./results", autoReport: true, verifySsl: true, followRedirects: true, saveLogs: true });
+  const sseRef = useRef(null);
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([listScans().catch(() => []), getSettings().catch(() => settings)]).then(([scans, cfg]) => {
+      if (!mounted) return;
+      setSettings((prev) => ({ ...prev, ...cfg }));
+      if (Array.isArray(scans) && scans.length) {
+        const latest = scans[scans.length - 1];
+        setScanTarget(latest.target || "");
+      }
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => () => sseRef.current?.close(), []);
+
+  const launch = useCallback(async ({ url, modules, depth, threads }) => {
+    sseRef.current?.close();
+    setRunning(true);
+    setProgress(0);
+    setLogs([]);
+    setFindings([]);
+    setScanTarget(url);
+    setPage("live");
+
+    const started = await apiStartScan({
+      url,
+      modules,
+      depth,
+      threads,
+      verify_ssl: !!settings.verifySsl,
+    });
+
+    setScanId(started.scan_id);
+
+    const es = streamScan(started.scan_id);
+    sseRef.current = es;
+
+    es.addEventListener("log", (ev) => {
+      const d = JSON.parse(ev.data);
+      setLogs((prev) => [...prev, { t: d.ts || new Date().toLocaleTimeString("en-GB", { hour12: false }), c: toHexColor(d.msg), m: d.msg }]);
+    });
+
+    es.addEventListener("finding", (ev) => {
+      const f = normalizeFinding(JSON.parse(ev.data), findings.length);
+      setFindings((prev) => [...prev, f]);
+    });
+
+    es.addEventListener("phase", (ev) => {
+      const { phase } = JSON.parse(ev.data);
+      setProgress(PHASE_PROGRESS[phase] ?? 0);
+    });
+
+    es.addEventListener("status", (ev) => {
+      const { status } = JSON.parse(ev.data);
+      if (status === "complete" || status === "error") setRunning(false);
+    });
+
+    es.addEventListener("done", async () => {
+      try {
+        const finalScan = await getScan(started.scan_id);
+        setFindings((finalScan.findings || []).map(normalizeFinding));
+      } catch {
+        // Best effort sync only.
+      }
+      setProgress(100);
+      setRunning(false);
+      es.close();
+    });
+
+    es.onerror = () => {
+      setRunning(false);
+    };
+  }, [settings.verifySsl, findings.length]);
+
+  const saveAllSettings = useCallback(async (cfg) => {
+    const payload = {
+      timeout: Number(cfg.timeout) || 30,
+      user_agent: cfg.userAgent,
+      rate_limit: Number(cfg.rateLimit) || 10,
+      proxy: cfg.proxy || "",
+      output_dir: cfg.outputDir || "./results",
+      auto_report: !!cfg.autoReport,
+      verify_ssl: !!cfg.verifySsl,
+      follow_redirects: !!cfg.followRedirects,
+      save_logs: !!cfg.saveLogs,
+    };
+    await saveSettings(payload);
+    setSettings((prev) => ({ ...prev, ...cfg }));
+  }, []);
+
+  const criticalCount = findings.filter((f) => f.sev === "CRITICAL").length;
+
+  const NAV = [
+    { id: "dashboard", icon: "⬡", label: "Dashboard" },
+    { id: "scan", icon: "◎", label: "New Scan" },
+    { id: "live", icon: "◈", label: "Live Scan", pulse: running },
+    { id: "findings", icon: "◇", label: "Findings", count: criticalCount },
+    { id: "settings", icon: "◉", label: "Settings" },
+  ];
 
   return (
     <>
-      {screen === "auth" && (
-        <AuthScreen
-          onAuth={(u) => {
-            setUser(u);
-            setScreen("preeng");
-          }}
-        />
-      )}
-      {screen === "preeng" && <PreEngagementScreen user={user} onComplete={() => setScreen("mission")} />}
-      {screen === "mission" && (
-        <MissionScreen
-          onLaunch={(m) => {
-            setMission(m);
-            setScreen("dashboard");
-          }}
-        />
-      )}
-      {screen === "dashboard" && <DashboardScreen mission={mission} />}
+      <style>{CSS}</style>
+      <div className="aurora" />
+      <div className="shell">
+        <header className="topbar">
+          <svg width="30" height="30" viewBox="0 0 30 30" fill="none" style={{ flexShrink: 0 }}>
+            <polygon points="15,2 28,9 28,21 15,28 2,21 2,9" stroke="#63ebd7" strokeWidth="1.5" fill="none" opacity="0.8" />
+            <polygon points="15,7 23,11.5 23,20.5 15,24 7,20.5 7,11.5" stroke="#a78bfa" strokeWidth="1" fill="none" opacity="0.5" />
+            <circle cx="15" cy="15" r="2.5" fill="#63ebd7" />
+          </svg>
+          <div><div className="logo-text">Agent-Hunter</div><div className="logo-sub">Vulnerability Scanner</div></div>
+          <div className="topbar-right">
+            <div className={`status-pill ${running ? "active" : ""}`}><div className={`dot ${running ? "cyan" : ""}`} />{running ? "SCANNING" : "READY"}</div>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", letterSpacing: 1 }}>v2.1.0</div>
+          </div>
+        </header>
+
+        <nav className="sidebar">
+          <div className="sidebar-section">Navigation</div>
+          {NAV.map(({ id, icon, label, pulse, count }) => (
+            <button key={id} className={`nav-item ${page === id ? "active" : ""}`} onClick={() => setPage(id)}>
+              <span className="nav-icon">{icon}</span>
+              <span style={{ flex: 1 }}>{label}</span>
+              {pulse && <span className="nav-badge" style={{ background: "rgba(99,235,215,0.1)", color: "#63ebd7", borderColor: "rgba(99,235,215,0.2)" }}>●</span>}
+              {count > 0 && !pulse && <span className="nav-badge">{count}</span>}
+            </button>
+          ))}
+          <div className="sidebar-footer">
+            <div>Total findings · {findings.length}</div>
+            <div style={{ color: "#f87171", marginTop: 2 }}>Critical · {criticalCount}</div>
+          </div>
+        </nav>
+
+        <main className="main">
+          {page === "dashboard" && <Dashboard onNavigate={setPage} scanning={running} findings={findings} scanTarget={scanTarget} />}
+          {page === "scan" && <ScanPage onLaunch={launch} />}
+          {page === "live" && <LivePage running={running} progress={progress} logs={logs} />}
+          {page === "findings" && <FindingsPage findings={findings} />}
+          {page === "settings" && <SettingsPage config={settings} onSave={saveAllSettings} />}
+        </main>
+      </div>
     </>
   );
 }

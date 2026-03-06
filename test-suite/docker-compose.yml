@@ -1,0 +1,125 @@
+version: "3.8"
+
+# Agent-Hunter Test Suite
+# All containers are intentionally vulnerable - run in isolated network only.
+# DO NOT expose ports to the internet.
+
+networks:
+  vuln-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+
+  # ─────────────────────────────────────────────
+  # 1. WEB APP VULNS: XSS, SQLi, CSRF, etc.
+  # ─────────────────────────────────────────────
+
+  dvwa:
+    image: vulnerables/web-dvwa
+    container_name: target-dvwa
+    ports:
+      - "8010:80"
+    networks:
+      vuln-net:
+        ipv4_address: 172.30.0.10
+    restart: unless-stopped
+    labels:
+      scanner.category: "web"
+      scanner.vulns: "sqli,xss,csrf,lfi,rfi,command-injection,brute-force"
+
+  juice-shop:
+    image: bkimminich/juice-shop
+    container_name: target-juice-shop
+    ports:
+      - "8011:3000"
+    networks:
+      vuln-net:
+        ipv4_address: 172.30.0.11
+    restart: unless-stopped
+    labels:
+      scanner.category: "web"
+      scanner.vulns: "xss,sqli,idor,broken-auth,sensitive-data-exposure,xxe,ssrf"
+
+  webgoat:
+    image: webgoat/webgoat
+    container_name: target-webgoat
+    ports:
+      - "8012:8080"
+    networks:
+      vuln-net:
+        ipv4_address: 172.30.0.12
+    environment:
+      - WEBGOAT_HOST=0.0.0.0
+    restart: unless-stopped
+    labels:
+      scanner.category: "web"
+      scanner.vulns: "sqli,xss,broken-auth,access-control,insecure-deserialization"
+
+  # ─────────────────────────────────────────────
+  # 2. NETWORK / PORT SCANNING TARGETS
+  # ─────────────────────────────────────────────
+
+  # Metasploitable-style: multiple open services on known vulnerable ports
+  metasploitable:
+    image: tleemcjr/metasploitable2
+    container_name: target-network
+    ports:
+      - "8020:21"    # FTP (vsftpd 2.3.4 backdoor)
+      - "8021:22"    # SSH (weak creds)
+      - "8022:23"    # Telnet
+      - "8023:25"    # SMTP
+      - "8024:80"    # HTTP
+      - "8025:445"   # Samba
+      - "8026:3306"  # MySQL (no auth)
+      - "8027:5432"  # PostgreSQL
+      - "8028:6667"  # IRC
+    networks:
+      vuln-net:
+        ipv4_address: 172.30.0.20
+    restart: unless-stopped
+    labels:
+      scanner.category: "network"
+      scanner.vulns: "open-ports,default-creds,outdated-services,unauth-mysql,vsftpd-backdoor"
+
+  # ─────────────────────────────────────────────
+  # 3. DEPENDENCY / CVE SCANNING TARGETS
+  #    Served as a static manifest endpoint
+  # ─────────────────────────────────────────────
+
+  vuln-manifests:
+    image: nginx:alpine
+    container_name: target-manifests
+    ports:
+      - "8030:80"
+    volumes:
+      - ./targets/manifests:/usr/share/nginx/html:ro
+    networks:
+      vuln-net:
+        ipv4_address: 172.30.0.30
+    restart: unless-stopped
+    labels:
+      scanner.category: "dependency"
+      scanner.vulns: "known-cves,outdated-packages,malicious-packages"
+
+  # ─────────────────────────────────────────────
+  # 4. SAST / CODE ANALYSIS TARGETS
+  #    Exposed via a simple file-serving endpoint
+  # ─────────────────────────────────────────────
+
+  vuln-code:
+    image: nginx:alpine
+    container_name: target-sast
+    ports:
+      - "8040:80"
+    volumes:
+      - ./targets/code:/usr/share/nginx/html:ro
+    networks:
+      vuln-net:
+        ipv4_address: 172.30.0.40
+    restart: unless-stopped
+    labels:
+      scanner.category: "sast"
+      scanner.vulns: "hardcoded-secrets,sql-injection-pattern,eval-usage,path-traversal,weak-crypto"

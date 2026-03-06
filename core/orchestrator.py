@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import List, Optional, Type
 
 from config.settings import ENABLED_MODULES, SCAN_TIMEOUT_PER_MODULE, RL_REWARD_MAP
-from core.ai_brain import AIBrain
+from core.Hunter_brain import AIBrain
 from core.base_scanner import BaseScanner
 from core.bbp_policy import BBPPolicy, PolicyEnforcer
 from core.memory import ScanMemory

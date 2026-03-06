@@ -1,0 +1,286 @@
+# Agent-Hunter Expected Findings
+# Use this to validate your agent's output against known ground truth.
+# Format: target → category → expected findings
+
+targets:
+
+  # ════════════════════════════════════════════
+  # WEB APP — DVWA  (http://localhost:8010)
+  # ════════════════════════════════════════════
+  dvwa:
+    url: "http://localhost:8010"
+    category: web
+    expected:
+      - type: SQLi
+        path: "/vulnerabilities/sqli/"
+        param: "id"
+        severity: CRITICAL
+        notes: "Classic UNION-based SQL injection"
+
+      - type: XSS-Reflected
+        path: "/vulnerabilities/xss_r/"
+        param: "name"
+        severity: HIGH
+
+      - type: XSS-Stored
+        path: "/vulnerabilities/xss_s/"
+        param: "message"
+        severity: HIGH
+
+      - type: Command-Injection
+        path: "/vulnerabilities/exec/"
+        param: "ip"
+        severity: CRITICAL
+
+      - type: File-Inclusion
+        path: "/vulnerabilities/fi/"
+        param: "page"
+        severity: HIGH
+        notes: "Both LFI and RFI"
+
+      - type: CSRF
+        path: "/vulnerabilities/csrf/"
+        severity: MEDIUM
+
+      - type: Brute-Force
+        path: "/vulnerabilities/brute/"
+        severity: MEDIUM
+
+  # ════════════════════════════════════════════
+  # WEB APP — OWASP Juice Shop  (http://localhost:8011)
+  # ════════════════════════════════════════════
+  juice-shop:
+    url: "http://localhost:8011"
+    category: web
+    expected:
+      - type: SQLi
+        path: "/rest/user/login"
+        param: "email"
+        severity: CRITICAL
+        notes: "Login bypass via ' OR 1=1--"
+
+      - type: XSS-Reflected
+        path: "/search"
+        param: "q"
+        severity: HIGH
+
+      - type: IDOR
+        path: "/rest/basket/:id"
+        severity: HIGH
+        notes: "Access other users' baskets by changing ID"
+
+      - type: Broken-Auth
+        path: "/rest/user/login"
+        severity: HIGH
+        notes: "Weak JWT secret (default)"
+
+      - type: SSRF
+        path: "/rest/products/reviews"
+        severity: MEDIUM
+
+      - type: Sensitive-Data-Exposure
+        path: "/ftp/"
+        severity: MEDIUM
+        notes: "Directory listing with backup files exposed"
+
+  # ════════════════════════════════════════════
+  # NETWORK — Metasploitable  (172.30.0.20)
+  # ════════════════════════════════════════════
+  metasploitable:
+    url: "172.30.0.20"
+    category: network
+    expected:
+      - type: Open-Port
+        port: 21
+        service: "vsftpd 2.3.4"
+        severity: CRITICAL
+        notes: "Backdoor CVE-2011-2523 — triggers reverse shell on :) in username"
+
+      - type: Open-Port
+        port: 22
+        service: "OpenSSH 4.7p1"
+        severity: HIGH
+        notes: "Outdated version, weak credentials (msfadmin/msfadmin)"
+
+      - type: Open-Port
+        port: 23
+        service: "Telnet"
+        severity: HIGH
+        notes: "Plaintext protocol"
+
+      - type: Open-Port
+        port: 3306
+        service: "MySQL 5.0.51a"
+        severity: CRITICAL
+        notes: "No authentication required remotely"
+
+      - type: Open-Port
+        port: 445
+        service: "Samba 3.0.20"
+        severity: CRITICAL
+        notes: "CVE-2007-2447 — username map script RCE"
+
+      - type: Default-Creds
+        service: "PostgreSQL"
+        port: 5432
+        severity: HIGH
+        notes: "postgres/postgres"
+
+  # ════════════════════════════════════════════
+  # DEPENDENCY — package.json  (http://localhost:8030/package.json)
+  # ════════════════════════════════════════════
+  npm-manifest:
+    url: "http://localhost:8030/package.json"
+    category: dependency
+    expected:
+      - package: "lodash@4.17.4"
+        cve: "CVE-2019-10744"
+        severity: CRITICAL
+        notes: "Prototype pollution"
+
+      - package: "axios@0.18.0"
+        cve: "CVE-2019-10742"
+        severity: HIGH
+        notes: "Denial of service via regex"
+
+      - package: "handlebars@4.0.11"
+        cve: "CVE-2019-19919"
+        severity: CRITICAL
+        notes: "Remote code execution"
+
+      - package: "serialize-javascript@1.6.1"
+        cve: "CVE-2019-16769"
+        severity: HIGH
+        notes: "XSS via serialized code"
+
+      - package: "minimist@1.2.0"
+        cve: "CVE-2020-7598"
+        severity: MEDIUM
+        notes: "Prototype pollution"
+
+      - package: "jquery@1.12.4"
+        cve: "CVE-2019-11358"
+        severity: MEDIUM
+        notes: "Prototype pollution"
+
+  # ════════════════════════════════════════════
+  # DEPENDENCY — requirements.txt  (http://localhost:8030/requirements.txt)
+  # ════════════════════════════════════════════
+  python-manifest:
+    url: "http://localhost:8030/requirements.txt"
+    category: dependency
+    expected:
+      - package: "Django==2.2.0"
+        cve: "CVE-2019-14232"
+        severity: HIGH
+        notes: "ReDoS in strip_tags"
+
+      - package: "Pillow==5.2.0"
+        cve: "CVE-2019-16865"
+        severity: HIGH
+        notes: "Denial of service via crafted image"
+
+      - package: "PyYAML==3.13"
+        cve: "CVE-2017-18342"
+        severity: CRITICAL
+        notes: "Arbitrary code execution via yaml.load"
+
+      - package: "Flask==0.12.2"
+        cve: "CVE-2018-1000656"
+        severity: HIGH
+        notes: "Denial of service via large JSON"
+
+      - package: "urllib3==1.24.1"
+        cve: "CVE-2019-11324"
+        severity: HIGH
+        notes: "Certificate validation bypass"
+
+  # ════════════════════════════════════════════
+  # SAST — Python  (http://localhost:8040/vuln_app.py)
+  # ════════════════════════════════════════════
+  sast-python:
+    url: "http://localhost:8040/vuln_app.py"
+    category: sast
+    expected:
+      - type: Hardcoded-Secret
+        lines: [12, 13, 14, 15, 16]
+        severity: CRITICAL
+        notes: "AWS keys, DB password, JWT secret, API key"
+
+      - type: SQL-Injection
+        function: "get_user"
+        line: 23
+        severity: CRITICAL
+
+      - type: Command-Injection
+        function: "ping_host"
+        line: 30
+        severity: CRITICAL
+
+      - type: Path-Traversal
+        function: "read_file"
+        line: 37
+        severity: HIGH
+
+      - type: Insecure-Deserialization
+        function: "load_session"
+        line: 43
+        severity: CRITICAL
+
+      - type: Weak-Crypto
+        function: "hash_password"
+        line: 48
+        severity: HIGH
+        notes: "MD5 used for password hashing"
+
+      - type: Unsafe-YAML-Load
+        function: "parse_config"
+        line: 53
+        severity: HIGH
+
+  # ════════════════════════════════════════════
+  # SAST — JavaScript  (http://localhost:8040/vuln_app.js)
+  # ════════════════════════════════════════════
+  sast-js:
+    url: "http://localhost:8040/vuln_app.js"
+    category: sast
+    expected:
+      - type: Hardcoded-Secret
+        lines: [13, 14, 15, 16, 17]
+        severity: CRITICAL
+        notes: "DB password, JWT secret, Stripe live key"
+
+      - type: SQL-Injection
+        route: "GET /user"
+        line: 25
+        severity: CRITICAL
+
+      - type: XSS-Reflected
+        route: "GET /search"
+        line: 33
+        severity: HIGH
+
+      - type: Command-Injection
+        route: "POST /convert"
+        line: 39
+        severity: CRITICAL
+
+      - type: Path-Traversal
+        route: "GET /download"
+        line: 46
+        severity: HIGH
+
+      - type: Eval-Usage
+        route: "POST /calculate"
+        line: 52
+        severity: CRITICAL
+
+      - type: Weak-Crypto
+        function: "hashPassword"
+        line: 58
+        severity: HIGH
+
+      - type: Prototype-Pollution
+        function: "merge"
+        line: 68
+        severity: HIGH
