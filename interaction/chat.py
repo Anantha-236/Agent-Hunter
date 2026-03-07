@@ -136,14 +136,15 @@ class ChatSession:
         user_message: str,
         personal_updates: Optional[List[str]] = None,
     ) -> str:
-        """Get response from AI brain (Ollama or rule engine)."""
+        """Get response from AI brain (Ollama multi-turn or rule engine)."""
         try:
             system_prompt = self._build_system_prompt()
             if await self.ai._check_ollama():
-                response = await self.ai.ollama.chat(
-                    prompt=prompt,
+                # Build full multi-turn history for Ollama
+                ollama_history = self._build_ollama_history(prompt)
+                response = await self.ai.ollama.chat_with_history(
+                    history=ollama_history,
                     system=system_prompt,
-                    use_chat_endpoint=True,
                 )
                 if response:
                     return response
@@ -161,6 +162,27 @@ class ChatSession:
                 "Make sure Ollama is running (`ollama serve`) for my full capabilities, "
                 "or try again. I'm still here — let's figure this out together."
             )
+
+    def _build_ollama_history(
+        self,
+        current_prompt: str,
+        max_pairs: int = 6,
+    ) -> List[Dict[str, str]]:
+        """
+        Build an Ollama-compatible message history array.
+
+        Includes the last `max_pairs` user/assistant exchanges from
+        self.history, then appends the enriched current prompt as the
+        final user turn. Keeps total context manageable.
+        """
+        messages: List[Dict[str, str]] = []
+        # Take last N complete pairs from history (pairs = user+assistant)
+        recent = self.history[-(max_pairs * 2):] if self.history else []
+        for msg in recent:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        # Append current enriched prompt as the new user turn
+        messages.append({"role": "user", "content": current_prompt})
+        return messages
 
     def _format_scan_context(self) -> str:
         """Format active scan context for the prompt."""
@@ -472,6 +494,11 @@ class ChatSession:
         if name == "/weblearn":
             return await self._cmd_weblearn(cmd[1:] if len(cmd) > 1 else [])
 
+        if name in {"/think", "/reason"}:
+            return await self._cmd_think(cmd[1:] if len(cmd) > 1 else [])
+        if name in {"/threat", "/threatmodel"}:
+            return await self._cmd_threat(cmd[1:] if len(cmd) > 1 else [])
+
         commands = {
             "/help": self._cmd_help,
             "/mode": self._cmd_mode,
@@ -508,6 +535,10 @@ class ChatSession:
   /search      - Run live web research for a query
   /research    - Alias for /search
   /weblearn    - Research a query and store it in Hunter's memory
+  /think       - Deep chain-of-thought reasoning on a complex question
+  /reason      - Alias for /think
+  /threat      - Generate a STRIDE threat model for a target/system
+  /threatmodel - Alias for /threat
   /quit        - Exit (also: exit, quit, bye)
 
 Ask me anything across any domain:
@@ -650,6 +681,45 @@ Ask me anything across any domain:
             f"I think in probabilities. I look into the future.\n"
             f"I never make the same mistake twice."
         )
+
+    async def _cmd_think(self, args: list) -> str:
+        """Deep chain-of-thought reasoning: /think <complex question>"""
+        if not args:
+            return (
+                "Usage: /think <your complex question>\n"
+                "Example: /think What is the best architecture for a zero-trust network with 500 microservices?"
+            )
+        question = " ".join(args).strip()
+        context = ""
+        if self._scan_context:
+            context = self._format_scan_context()
+        response = await self.ai.deep_reason(
+            question=question,
+            context=context,
+            history=self.history[-6:] if self.history else None,
+        )
+        return response
+
+    async def _cmd_threat(self, args: list) -> str:
+        """Generate a STRIDE threat model: /threat <target/system description>"""
+        if not args:
+            return (
+                "Usage: /threat <target or system description>\n"
+                "Example: /threat https://api.example.com — REST API, Node.js, PostgreSQL, behind AWS ALB"
+            )
+        description = " ".join(args).strip()
+        technologies = []
+        if self._scan_context and self._scan_context.get("technologies"):
+            technologies = self._scan_context["technologies"]
+        context = ""
+        if self._scan_context:
+            context = self._format_scan_context()
+        response = await self.ai.threat_model(
+            target_description=description,
+            technologies=technologies,
+            context=context,
+        )
+        return response
 
     async def _cmd_search(self, args: list) -> str:
         if not args:

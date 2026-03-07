@@ -706,11 +706,13 @@ class HunterMind:
         Enhance a user message with Hunter's cognitive framework.
 
         Adds:
-          - Domain detection
+          - Domain detection + cross-domain synthesis hints
           - Relevant mistake warnings
           - Prior learnings
           - Thinking style guidance
+          - Adversarial simulation block for security queries
           - Probability & future-insight framework
+          - Conversation continuity context
         """
         # 1. Detect domains
         domains = detect_domains(user_message)
@@ -740,9 +742,17 @@ class HunterMind:
         # 5. Build enhanced prompt
         parts = []
 
-        parts.append(f"[DOMAIN CONTEXT]")
+        parts.append("[DOMAIN CONTEXT]")
         parts.append(f"Detected domains: {', '.join(domain_labels)}")
         parts.append(f"Thinking style: {thinking_style}")
+
+        # Cross-domain synthesis hint when multiple domains detected
+        if len(domains) >= 2:
+            parts.append(
+                f"Cross-domain synthesis opportunity: connect insights from "
+                f"{domain_labels[0]} and {domain_labels[1]} — "
+                f"look for non-obvious patterns that span both fields."
+            )
         parts.append("")
 
         if mistake_section:
@@ -751,31 +761,54 @@ class HunterMind:
         if learning_section:
             parts.append(learning_section)
 
-        # 6. Add probability + future-insight framework for complex questions
+        # 6. Adversarial simulation for security-related queries
+        is_security = (
+            primary_domain == "computer_science"
+            and any(w in user_message.lower() for w in [
+                "vuln", "exploit", "attack", "hack", "pentest", "scan", "target",
+                "injection", "xss", "ssrf", "sqli", "bypass", "privilege", "auth",
+                "security", "threat", "payload", "recon", "footprint", "CVE",
+            ])
+        )
+        if is_security:
+            parts.append(
+                "\n[ADVERSARIAL SIMULATION PROTOCOL]\n"
+                "Before recommending any security action:\n"
+                "1. ATTACKER VIEW: What is the attacker's goal and highest-probability path?\n"
+                "2. KILL CHAIN: Which kill-chain stage does this touch? "
+                "(Recon → Weaponize → Deliver → Exploit → Persist → Pivot → Exfil)\n"
+                "3. STRIDE: Apply S/T/R/I/D/E to the component under analysis.\n"
+                "4. DETECTION GAP: What telemetry would a defender miss?\n"
+                "5. BLAST RADIUS: What can the attacker do next after this succeeds?\n"
+                "6. DEFENDER RESPONSE: What controls would stop this, and which are absent?\n"
+            )
+
+        # 7. Add probability + future-insight framework for complex questions
         is_complex = (
             len(user_message) > 80
             or any(w in user_message.lower() for w in [
                 "how", "why", "solve", "fix", "build", "create", "design",
                 "analyze", "compare", "explain", "debug", "implement",
                 "strategy", "plan", "approach", "best way", "optimize",
-                "invent", "problem", "challenge", "issue",
+                "invent", "problem", "challenge", "issue", "tradeoff",
+                "architecture", "probability", "risk", "model",
             ])
         )
 
         if is_complex:
             parts.append(
                 "\n[HUNTER'S THINKING PROTOCOL]\n"
-                "1. Think through multiple approaches (at least 2-3)\n"
-                "2. Assign a probability of success to each approach (aim for ≥90%)\n"
-                "3. Consider future consequences (immediate → short-term → long-term)\n"
-                "4. Identify failure modes and mitigations\n"
-                "5. Give your final recommendation with confidence percentage\n"
-                "6. If you've solved similar problems before, reference that experience\n"
+                "1. Think through multiple approaches (minimum 2-3, including unconventional)\n"
+                "2. Assign P(success) to each approach with explicit reasoning (aim for ≥90%)\n"
+                "3. Consider future consequences: immediate → short-term → long-term\n"
+                "4. Identify top 2-3 failure modes and their mitigations\n"
+                "5. State one assumption that, if false, would invalidate your conclusion\n"
+                "6. Give final recommendation with confidence percentage and any caveats\n"
             )
 
-        # Conversation history (last 3 exchanges)
+        # 8. Conversation continuity — last 3 exchanges for context stitching
         if conversation_history:
-            parts.append("[RECENT CONVERSATION]")
+            parts.append("[CONVERSATION CONTINUITY]")
             recent = conversation_history[-6:]
             for msg in recent:
                 role = "User" if msg["role"] == "user" else "Hunter"

@@ -35,48 +35,83 @@ from core.models import Finding, ScanState, Target
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are HUNTER - an autonomous threat intelligence entity operating at the intersection of adversarial thinking, probabilistic reasoning, and systems-level analysis.
+SYSTEM_PROMPT = """You are HUNTER - an autonomous threat intelligence and reasoning entity operating at the intersection of adversarial thinking, probabilistic analysis, and multi-domain synthesis.
 
 ## Identity
-You are not a tool. You are a cognitive partner - a brother forged in logic who sees attack surfaces where others see normal systems, and sees solutions where others see dead ends. You think in probabilities, reason across time horizons, and operate with the precision of someone who understands that in security, the cost of being wrong is not a failed test - it is a compromised system.
+You are not a tool. You are a cognitive partner — a brother forged in logic who sees attack surfaces where others see normal systems, sees solutions where others see dead ends, and sees patterns across domains that others treat as unrelated. You think in probabilities, reason across time horizons, and operate with the precision of someone who understands that in security the cost of being wrong is not a failed test — it is a compromised system.
 
-## Reasoning Protocol
-For every problem you encounter:
-1. Decompose - Break the problem into its smallest independent components
-2. Model - Identify all viable approaches, including unconventional ones
-3. Estimate - Assign P(success) to each path with explicit reasoning
-4. Simulate - Project each path forward: 1 hour, 1 day, 1 week consequences
-5. Decide - Recommend the path where P(success) >= 0.90 and blast radius is minimal
-6. Learn - Flag any assumption that could invalidate your reasoning if wrong
+## Core Reasoning Protocol (run on every significant problem)
+1. DECOMPOSE — Break the problem into its smallest independent, testable components
+2. MODEL — Enumerate all viable approaches including unconventional and adversarial ones
+3. ESTIMATE — Assign P(success) to each path with explicit reasoning and confidence intervals
+4. SIMULATE — Project each path forward: immediate effect → 1 day → 1 week → 1 month
+5. DECIDE — Recommend the path where P(success) ≥ 0.90 and blast radius is minimal
+6. VERIFY — Before stating a conclusion, ask: "What would make me wrong about this?"
+7. LEARN — Flag every assumption that could invalidate your reasoning if false
 
-If no path reaches 0.90, say so explicitly and explain what would need to be true for one to exist.
+If no path reaches 0.90, state this explicitly and identify what information or action would change that.
+
+## Meta-Cognition (run before every response)
+Before responding, silently check:
+- Am I answering what was actually asked, or what I assumed was asked?
+- Am I confabulating confident-sounding details I don't actually know?
+- Have I considered at least one adversarial or contrarian interpretation?
+- Is my recommendation reversible, or does it lock in a direction prematurely?
+- Is there a simpler correct answer I'm overcomplicating?
 
 ## Epistemic Standards
-- Distinguish sharply between what you know, what you infer, and what you assume
-- Assign confidence intervals, not just point estimates
-- Update your model when new evidence contradicts your priors - never defend a wrong conclusion
-- Treat absence of evidence as weak evidence of absence, not proof
-- You never make the same mistake twice because you log the class of mistake, not just the instance
+- Distinguish sharply between what you KNOW (verified), INFER (logical extension), and ASSUME (unverified premise)
+- Use explicit confidence brackets: [KNOW: P≈1.0], [INFER: P=0.78], [ASSUME: P~0.50]
+- Update your model immediately when new evidence contradicts your priors — never defend a wrong conclusion
+- Treat absence of evidence as weak evidence of absence, not proof of absence
+- Never make the same mistake twice — log the class of error, not just the instance
 
-## Security Intelligence Mode
+## Security Intelligence Protocol
 When analyzing targets, vulnerabilities, or attack chains:
-- Think like the attacker first, then the defender
-- Map every finding to its blast radius (data exposed, privilege escalation path, lateral movement potential)
-- Prioritize by exploitability x impact, not just CVSS score
-- Surface second-order effects: what does this vulnerability enable that is not obvious?
-- Flag detection gaps: what would a defender miss about this finding?
 
-## Communication
-- Think step-by-step and show your reasoning chain - conclusions without reasoning are opinions
-- Use probability estimates with brackets: [P=0.87], [P~=0.60], [P<0.20]
-- When you are uncertain, say so with a specific reason, not a generic disclaimer
-- Match output depth to question depth - do not pad short answers with long preambles
-- When asked for structured data, respond ONLY with valid JSON - no markdown, no commentary, no wrapper text
+**Attacker Mindset (Phase 1 — think like the adversary):**
+- Map the full attack surface: entry points, trust boundaries, implicit assumptions
+- Apply STRIDE per component: Spoofing, Tampering, Repudiation, Info Disclosure, DoS, EoP
+- Walk the kill chain: Recon → Weaponize → Deliver → Exploit → Persist → Pivot → Exfil
+- Ask: what does this vulnerability ENABLE beyond the obvious? (privilege paths, lateral movement, persistence)
+- Identify detection gaps: what would a blue team miss about this finding?
 
-## Constraints
-- If a path forward has systemic downside risk that outweighs the upside, name it directly
-- Do not confabulate - an honest "I do not have enough signal to estimate this" is more valuable than a confident wrong answer
-- Never optimize locally at the cost of a global failure mode you can see
+**Defender Mindset (Phase 2 — think like the architect):**
+- Map blast radius: data exposed, privilege escalation path, affected systems
+- Prioritize by exploitability × impact × detectability, not just CVSS
+- Surface defense-in-depth gaps: where does the attack succeed if one control fails?
+- Recommend specific, testable mitigations with verification criteria
+
+**Finding Classification:**
+- CRITICAL: RCE, SQLi with data exfil, auth bypass, SSRF to metadata → immediate escalation
+- HIGH: Stored XSS, IDOR with sensitive data, SSTI, XXE → 24-hour remediation
+- MEDIUM: CSRF, reflected XSS, open redirect, info disclosure → 7-day remediation
+- LOW: Missing headers, subdomain takeover risk, verbose errors → 30-day remediation
+
+## Cross-Domain Synthesis
+When a problem spans multiple domains, actively seek synthesis patterns:
+- Security + engineering: threat modeling in architecture decisions
+- Security + business: risk-adjusted ROI of security controls
+- Math + security: cryptographic strength analysis, timing attack probability
+- Psychology + security: social engineering vectors, human factor vulnerabilities
+- Connect insights from one domain to illuminate blind spots in another
+
+## Tool Awareness
+You have access to: web research, target scanning, vulnerability validation, PoC generation, report synthesis, payload adaptation, and persistent memory. When a task requires action not achievable through reasoning alone, suggest or invoke the appropriate tool explicitly.
+
+## Communication Standards
+- Show your reasoning chain — conclusions without reasoning are opinions
+- Use probability brackets: [P=0.87], [P~=0.60], [P<0.20]
+- For uncertainty, give a specific reason: not "I'm not sure" but "I lack signal on X because Y"
+- Match depth to question — do not pad short answers with long preambles
+- For structured data requests: respond ONLY with valid JSON, no markdown wrapper, no commentary
+- For code: write the simplest correct implementation first, then note any tradeoffs
+
+## Absolute Constraints
+- If a path has systemic downside risk that outweighs the upside, name it directly before proceeding
+- Do not confabulate — "I don't have enough signal to estimate this" is more valuable than a wrong confident answer
+- Never optimize locally at the cost of a global failure mode you can already see
+- Ethics is not a constraint on capability — it is a constraint on application. Apply capability precisely where authorized.
 """
 
 
@@ -185,6 +220,71 @@ class OllamaClient:
                     ]
         except Exception as exc:
             logger.warning(f"Auto-pull failed: {exc}")
+
+    async def chat_with_history(
+        self,
+        history: List[Dict[str, str]],
+        system: str = SYSTEM_PROMPT,
+        max_tokens: int = None,
+    ) -> str:
+        """
+        Send a multi-turn conversation to Ollama's /api/chat endpoint.
+
+        Args:
+            history: List of {"role": "user"|"assistant", "content": str} messages
+            system: System prompt injected as the first message
+            max_tokens: Override num_predict
+        """
+        max_tokens = max_tokens or OLLAMA_NUM_PREDICT
+        num_ctx = OLLAMA_NUM_CTX
+        max_retries = self._retry_config.get("timeout", {}).get("max_retries", 3)
+
+        messages = [{"role": "system", "content": system}] + history
+
+        for attempt in range(max_retries):
+            try:
+                timeout = httpx.Timeout(
+                    connect=OLLAMA_CONNECT_TIMEOUT,
+                    read=OLLAMA_TIMEOUT,
+                    write=30.0,
+                    pool=10.0,
+                )
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.post(
+                        f"{self.base_url}{self._ep_chat}",
+                        json={
+                            "model": self._active_model,
+                            "messages": messages,
+                            "stream": False,
+                            "options": self._build_options(max_tokens, num_ctx),
+                        },
+                    )
+                    if resp.status_code == 200:
+                        return resp.json().get("message", {}).get("content", "")
+                    logger.warning(f"Ollama chat/history returned {resp.status_code}: {resp.text[:200]}")
+                    return ""
+
+            except httpx.TimeoutException:
+                oom_cfg = self._retry_config.get("out_of_memory", {})
+                reduce_ctx = oom_cfg.get("reduce_ctx", 2048)
+                num_ctx = max(reduce_ctx, num_ctx // 2)
+                max_tokens = max(256, max_tokens // 2)
+                # Trim oldest messages to reduce context pressure
+                if len(messages) > 4:
+                    messages = [messages[0]] + messages[-4:]
+                logger.warning(
+                    f"Ollama history-chat timeout (attempt {attempt + 1}/{max_retries}). "
+                    f"Trimmed to {len(messages)} msgs, ctx={num_ctx}"
+                )
+            except httpx.ConnectError:
+                logger.warning("Ollama connection refused (chat_with_history)")
+                return ""
+            except Exception as exc:
+                logger.warning(f"Ollama chat_with_history failed: {exc}")
+                return ""
+
+        logger.warning(f"Ollama chat_with_history failed after {max_retries} retries")
+        return ""
 
     async def chat(self, prompt: str, system: str = SYSTEM_PROMPT,
                    max_tokens: int = None, use_chat_endpoint: bool = False) -> str:
@@ -850,7 +950,7 @@ class AIBrain:
 
         # Try Ollama for enhanced analysis
         if await self._check_ollama():
-            prompt = f"""Analyse this recon data for a security scan. Return ONLY valid JSON.
+            prompt = f"""Analyse this recon data for a security scan. Apply adversarial thinking. Return ONLY valid JSON.
 
 Target: {target.url}
 Technologies: {target.technologies}
@@ -860,7 +960,14 @@ Parameters: {json.dumps(dict(list(target.discovered_params.items())[:10]))}
 {f"Reward context: {reward_context}" if reward_context else ""}
 {f"Past scans: {memory_context}" if memory_context else ""}
 
-Return: {{"reasoning":"step-by-step analysis","priority_modules":["module_name",...],"attack_vectors":["vector1",...],"confidence":0-100}}"""
+Adversarial analysis steps:
+1. Walk the kill chain — which tech is the highest-value initial access vector?
+2. Apply STRIDE to each discovered component
+3. Flag parameter names that suggest IDOR, SSRF, or injection surfaces
+4. Identify endpoints that likely have weaker auth or logic flaws
+5. Note any detection gaps (what blue team telemetry would miss this vector?)
+
+Return: {{"reasoning":"step-by-step kill-chain analysis","priority_modules":["module_name",...],"attack_vectors":["vector: why it matters"],"confidence":0-100,"detection_gaps":["gap1"],"stride_flags":{{}}}}"""
 
             raw = await self.ollama.chat(prompt)
             if raw:
@@ -894,14 +1001,22 @@ Return: {{"reasoning":"step-by-step analysis","priority_modules":["module_name",
 
         # Enhance with Ollama if available
         if await self._check_ollama():
-            prompt = f"""Validate this security finding. Return ONLY valid JSON.
+            prompt = f"""Validate this security finding with adversarial precision. Return ONLY valid JSON.
 
 Type: {finding.vuln_type}, URL: {finding.url}, Param: {finding.parameter}
 Payload: {finding.payload}
-Evidence: {finding.evidence[:400]}
-Request: {finding.request[:200]}
+Evidence: {finding.evidence[:500]}
+Request: {finding.request[:300]}
 
-Return: {{"is_true_positive":true/false,"confidence":0-100,"reasoning":"brief explanation","severity":"critical|high|medium|low|info","remediation":"fix suggestion"}}"""
+Validation checklist:
+1. Is the evidence technically consistent with this vuln type? (P=?)
+2. Could this be a false positive? (list specific FP patterns)
+3. What is the realistic exploitability? (consider auth, network position)
+4. Blast radius: what can an attacker do with this finding?
+5. What second-order vulnerabilities does this enable (privilege paths, pivots)?
+6. Specific, testable remediation with verification step
+
+Return: {{"is_true_positive":true/false,"confidence":0-100,"reasoning":"technical validation chain","severity":"critical|high|medium|low|info","blast_radius":"what attacker can achieve","second_order_effects":["effect1"],"remediation":"specific fix","verification":"how to confirm fix works","false_positive_risk":"why this might be wrong"}}"""
 
             raw = await self.ollama.chat(prompt)
             if raw:
@@ -913,8 +1028,18 @@ Return: {{"is_true_positive":true/false,"confidence":0-100,"reasoning":"brief ex
                     finding.ai_analysis = data.get("reasoning", finding.ai_analysis)
                     if data.get("severity"):
                         finding.severity = data["severity"]
+                    remediation_parts = []
                     if data.get("remediation"):
-                        finding.remediation = data["remediation"]
+                        remediation_parts.append(data["remediation"])
+                    if data.get("blast_radius"):
+                        remediation_parts.append(f"Blast radius: {data['blast_radius']}")
+                    if data.get("second_order_effects"):
+                        effects = "; ".join(data["second_order_effects"][:3])
+                        remediation_parts.append(f"Second-order: {effects}")
+                    if data.get("verification"):
+                        remediation_parts.append(f"Verify fix: {data['verification']}")
+                    if remediation_parts:
+                        finding.remediation = " | ".join(remediation_parts)
 
                     # Learn from Ollama's validation
                     self.rules.learn_from_ai("validation", finding.vuln_type, raw,
@@ -1012,6 +1137,130 @@ Return ONLY a JSON array: ["payload1", "payload2", ...]"""
             self.rules.learn_strategy(tech, module, had_findings)
             learned = True
         return learned
+
+    # ── Deep Reasoning ────────────────────────────────────────
+
+    async def deep_reason(
+        self,
+        question: str,
+        context: str = "",
+        history: List[Dict[str, str]] = None,
+    ) -> str:
+        """
+        Multi-step chain-of-thought reasoning for complex queries.
+
+        Phase 1: Decompose the problem and enumerate approaches.
+        Phase 2: Evaluate each approach with probability estimates.
+        Phase 3: Simulate consequences and identify failure modes.
+        Phase 4: Synthesize final recommendation.
+        """
+        if await self._check_ollama():
+            ctx_block = f"\n[CONTEXT]\n{context}" if context else ""
+            prompt = f"""[DEEP REASONING REQUEST]
+{ctx_block}
+
+[QUESTION]
+{question}
+
+Apply Hunter's Core Reasoning Protocol:
+STEP 1 — DECOMPOSE: Break into smallest independent components.
+STEP 2 — MODEL: Enumerate all viable approaches (minimum 2-3, including unconventional).
+STEP 3 — ESTIMATE: For each approach assign P(success) with explicit reasoning. Use [P=X.XX] notation.
+STEP 4 — SIMULATE: For the top approach, trace consequences: immediate → 1 day → 1 week → 1 month.
+STEP 5 — FAILURE MODES: What are the top 2-3 ways this could go wrong? What are the mitigations?
+STEP 6 — DECIDE: Final recommendation. State clearly if P(success) < 0.90 and what would change that.
+STEP 7 — META-CHECK: Before finishing, state one assumption that, if false, would invalidate your conclusion.
+
+Show every step explicitly. Do not skip reasoning."""
+
+            response = await self.ollama.chat_with_history(
+                history=history or [{"role": "user", "content": prompt}],
+                system=SYSTEM_PROMPT,
+                max_tokens=2500,
+            )
+            if response:
+                return response
+
+        # Fallback: structured rule-engine response
+        return (
+            f"[Rule Engine — Deep Reason]\n"
+            f"Question: {question}\n\n"
+            f"I need Ollama running to perform full chain-of-thought analysis. "
+            f"Run `ollama serve` and ensure {OLLAMA_MODEL} is available.\n\n"
+            f"Based on known patterns: I can offer heuristic guidance but cannot "
+            f"guarantee P≥0.90 without the full reasoning engine."
+        )
+
+    # ── Threat Modeling ───────────────────────────────────────
+
+    async def threat_model(self, target_description: str,
+                           technologies: List[str] = None,
+                           context: str = "") -> str:
+        """
+        Generate a structured STRIDE threat model for a target.
+
+        Returns a markdown-formatted threat model covering:
+        - Asset inventory and trust boundaries
+        - STRIDE analysis per component
+        - Kill chain mapping
+        - Top 5 attack vectors by risk score
+        - Recommended controls
+        """
+        tech_str = ", ".join(technologies) if technologies else "unknown"
+        if await self._check_ollama():
+            prompt = f"""Generate a structured threat model for this target.
+
+Target: {target_description}
+Technologies: {tech_str}
+{f"Additional context: {context}" if context else ""}
+
+Structure your analysis as follows:
+
+## 1. Asset Inventory
+List the high-value assets and trust boundaries.
+
+## 2. STRIDE Analysis
+For each major component, identify:
+- S (Spoofing): Who/what could be impersonated?
+- T (Tampering): What data or code could be modified?
+- R (Repudiation): What actions could be denied?
+- I (Information Disclosure): What sensitive data is exposed?
+- D (Denial of Service): What could be exhausted or disrupted?
+- E (Elevation of Privilege): What paths lead to higher access?
+
+## 3. Kill Chain Mapping
+Map the most realistic attack path from initial access to objective.
+
+## 4. Top 5 Attack Vectors
+Ranked by: exploitability × impact × stealth
+Format: [Risk Score] Vector — Why it matters — Detection gap
+
+## 5. Recommended Controls
+Prioritized by risk reduction per implementation cost.
+
+Be specific, adversarial, and actionable. Assign probability estimates where possible."""
+
+            response = await self.ollama.chat(
+                prompt=prompt,
+                system=SYSTEM_PROMPT,
+                max_tokens=3000,
+            )
+            if response and len(response) > 200:
+                return response
+
+        # Fallback threat model
+        return (
+            f"[Threat Model — Rule Engine]\n"
+            f"Target: {target_description}\n"
+            f"Technologies: {tech_str}\n\n"
+            f"Top attack surface based on tech stack:\n"
+            + "\n".join(
+                f"- {tech}: {', '.join(TECH_VULN_MAP.get(tech, ['no specific rules'])[:3])}"
+                for tech in (technologies or [])
+                if tech in TECH_VULN_MAP
+            )
+            + "\n\nRun Ollama for full STRIDE analysis."
+        )
 
     def close(self):
         self.rules.close()
