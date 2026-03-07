@@ -7,6 +7,8 @@ import {
   getSettings,
   saveSettings,
   streamScan,
+  startRecon,
+  streamRecon,
 } from "./api";
 
 /* Deep Void Intelligence UI + real backend wiring */
@@ -18,6 +20,18 @@ const PHASE_PROGRESS = {
   scan: 75,
   validate: 90,
   complete: 100,
+};
+
+const DEFAULT_SETTINGS = {
+  timeout: 30,
+  userAgent: "AgentHunter/2.1",
+  rateLimit: 10,
+  proxy: "",
+  outputDir: "./results",
+  autoReport: true,
+  verifySsl: true,
+  followRedirects: true,
+  saveLogs: true,
 };
 
 const CSS = `
@@ -98,6 +112,28 @@ function normalizeFinding(raw, idx) {
     cve: raw.cwe_id || "N/A",
     ts: (raw.discovered_at || "").slice(11, 19) || "--:--:--",
     desc: raw.description || "No description",
+  };
+}
+
+function parseEventData(data, fallback = {}) {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return fallback;
+  }
+}
+
+function toUiSettings(raw = {}) {
+  return {
+    timeout: raw.timeout ?? DEFAULT_SETTINGS.timeout,
+    userAgent: raw.userAgent ?? raw.user_agent ?? DEFAULT_SETTINGS.userAgent,
+    rateLimit: raw.rateLimit ?? raw.rate_limit ?? DEFAULT_SETTINGS.rateLimit,
+    proxy: raw.proxy ?? DEFAULT_SETTINGS.proxy,
+    outputDir: raw.outputDir ?? raw.output_dir ?? DEFAULT_SETTINGS.outputDir,
+    autoReport: raw.autoReport ?? raw.auto_report ?? DEFAULT_SETTINGS.autoReport,
+    verifySsl: raw.verifySsl ?? raw.verify_ssl ?? DEFAULT_SETTINGS.verifySsl,
+    followRedirects: raw.followRedirects ?? raw.follow_redirects ?? DEFAULT_SETTINGS.followRedirects,
+    saveLogs: raw.saveLogs ?? raw.save_logs ?? DEFAULT_SETTINGS.saveLogs,
   };
 }
 
@@ -213,7 +249,22 @@ function Dashboard({ onNavigate, scanning, findings, scanTarget }) {
 }
 
 function ScanPage({ onLaunch, availableModules }) {
+  const [step, setStep] = useState(1);
+  /* Step 1: target config */
   const [url, setUrl] = useState("");
+  const [inScope, setInScope] = useState("");
+  const [outScope, setOutScope] = useState("");
+  const [instructions, setInstructions] = useState("");
+  /* Step 2: discovery */
+  const [reconStatus, setReconStatus] = useState("idle");
+  const [subdomains, setSubdomains] = useState([]);
+  const [ports, setPorts] = useState([]);
+  const [technologies, setTechnologies] = useState([]);
+  const [reconLogs, setReconLogs] = useState([]);
+  const reconSSE = useRef(null);
+  const logRef = useRef(null);
+  /* Step 3: selection */
+  const [selectedAssets, setSelectedAssets] = useState([]);
   const [selectedModules, setSelectedModules] = useState([]);
   const [depth, setDepth] = useState("medium");
   const [threads, setThreads] = useState("4");
@@ -226,88 +277,292 @@ function ScanPage({ onLaunch, availableModules }) {
       return valid.length ? valid : [...availableModules];
     });
   }, [availableModules]);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [reconLogs]);
+  useEffect(() => () => reconSSE.current?.close(), []);
 
-  const toggle = (moduleId) => {
-    setSelectedModules((prev) =>
-      prev.includes(moduleId)
-        ? prev.filter((m) => m !== moduleId)
-        : [...prev, moduleId]
-    );
+  /* build assets from discovered subs+ports */
+  const buildAssets = () => {
+    const byHost = {};
+    ports.forEach((p) => { (byHost[p.host] ??= []).push(p); });
+    const out = [];
+    subdomains.forEach((s) => {
+      const hp = byHost[s.hostname];
+      if (hp) {
+        hp.forEach((p) => {
+          const scheme = ["https", "https-alt"].includes(p.service) || p.port === 443 || p.port === 8443 ? "https" : "http";
+          const suffix = p.port === 80 || p.port === 443 ? "" : `:${p.port}`;
+          out.push({ id: `${s.hostname}:${p.port}`, label: `${s.hostname}:${p.port}`, url: `${scheme}://${s.hostname}${suffix}`, host: s.hostname, port: p.port, service: p.service, ip: s.ip });
+        });
+      } else {
+        out.push({ id: `${s.hostname}:0`, label: s.hostname, url: `https://${s.hostname}`, host: s.hostname, port: 0, service: "resolved", ip: s.ip });
+      }
+    });
+    return out;
+  };
+  const assets = buildAssets();
+
+  const discover = async () => {
+    if (!url) return;
+    setStep(2);
+    setReconStatus("running");
+    setSubdomains([]);
+    setPorts([]);
+    setTechnologies([]);
+    setReconLogs([]);
+    try {
+      const { recon_id } = await startRecon({
+        url,
+        in_scope: inScope ? inScope.split("\n").map((s) => s.trim()).filter(Boolean) : [],
+        out_scope: outScope ? outScope.split("\n").map((s) => s.trim()).filter(Boolean) : [],
+        instructions,
+      });
+      const es = streamRecon(recon_id);
+      reconSSE.current = es;
+      const ts = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
+      es.addEventListener("subdomain", (e) => { const d = JSON.parse(e.data); setSubdomains((p) => [...p, d]); setReconLogs((p) => [...p, { t: ts(), m: `Subdomain: ${d.hostname} \u2192 ${d.ip}` }]); });
+      es.addEventListener("port", (e) => { const d = JSON.parse(e.data); setPorts((p) => [...p, d]); setReconLogs((p) => [...p, { t: ts(), m: `Port open: ${d.host}:${d.port} (${d.service})` }]); });
+      es.addEventListener("technology", (e) => { const d = JSON.parse(e.data); setTechnologies((p) => p.includes(d.tech) ? p : [...p, d.tech]); });
+      es.addEventListener("status", (e) => { const d = JSON.parse(e.data); setReconLogs((p) => [...p, { t: ts(), m: d.msg }]); });
+      es.addEventListener("done", (event) => {
+        const payload = parseEventData(event.data, {});
+        const status = payload.status || "complete";
+        setReconStatus(status === "failed" ? "failed" : status === "error" ? "error" : "complete");
+        if (status !== "complete") {
+          setReconLogs((p) => [...p, { t: ts(), m: `Discovery ended with status: ${status}` }]);
+        }
+        es.close();
+      });
+      es.onerror = () => {
+        setReconStatus("error");
+        setReconLogs((p) => [...p, { t: ts(), m: "Discovery stream error" }]);
+      };
+    } catch (err) {
+      setReconStatus("error");
+      setReconLogs((p) => [...p, { t: new Date().toLocaleTimeString("en-GB", { hour12: false }), m: `Error: ${err.message}` }]);
+    }
   };
 
-  const allSelected =
-    availableModules.length > 0 && selectedModules.length === availableModules.length;
+  const proceedToSelect = () => { setSelectedAssets(assets.map((a) => a.id)); setStep(3); };
+  const toggleAsset = (id) => setSelectedAssets((p) => p.includes(id) ? p.filter((a) => a !== id) : [...p, id]);
+  const toggleModule = (id) => setSelectedModules((p) => p.includes(id) ? p.filter((m) => m !== id) : [...p, id]);
+
+  const launchScan = () => {
+    if (!selectedModules.length || !selectedAssets.length) return;
+    const chosen = assets.filter((a) => selectedAssets.includes(a.id));
+    const targetUrls = chosen.map((a) => a.url);
+    const scopeHosts = [...new Set(chosen.map((a) => a.host))];
+    onLaunch({
+      url: targetUrls[0] || url,
+      modules: selectedModules,
+      depth,
+      threads: Number(threads),
+      in_scope: scopeHosts,
+      out_scope: outScope ? outScope.split("\n").map((s) => s.trim()).filter(Boolean) : [],
+      instructions,
+      selected_assets: targetUrls,
+    });
+  };
+
+  const stepItems = [{ n: 1, label: "Configure" }, { n: 2, label: "Discover" }, { n: 3, label: "Scan" }];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div><div className="page-title">Configure <span className="accent">Scan</span></div><div className="page-sub">Define target · select modules · set parameters</div></div>
-      <div className="card card-lit"><div className="card-body">
-        <label className="field-label">Target URL</label>
-        <div style={{ display: "flex", gap: 10 }}>
-          <input className="field" placeholder="https://target.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />
-          <button
-            className="btn btn-solid"
-            style={{ flexShrink: 0 }}
-            onClick={() => {
-              if (!url || !selectedModules.length) return;
-              onLaunch({ url, modules: selectedModules, depth, threads: Number(threads) });
-            }}
-          >
-            Launch ▶
-          </button>
+      <div>
+        <div className="page-title">
+          {step === 1 && <>Configure <span className="accent">Target</span></>}
+          {step === 2 && <>Asset <span className="accent">Discovery</span></>}
+          {step === 3 && <>Select &amp; <span className="accent">Scan</span></>}
         </div>
-      </div></div>
+        <div className="page-sub">Step {step} of 3</div>
+      </div>
 
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Scan Modules ({selectedModules.length}/{availableModules.length})</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              className="btn btn-ghost"
-              style={{ padding: "5px 10px", fontSize: 10 }}
-              onClick={() => setSelectedModules([...availableModules])}
-            >
-              Select All
-            </button>
-            <button
-              className="btn btn-ghost"
-              style={{ padding: "5px 10px", fontSize: 10 }}
-              onClick={() => setSelectedModules([])}
-            >
-              Clear
-            </button>
+      {/* step indicator */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {stepItems.map(({ n, label }) => (
+          <div key={n} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 600,
+              background: step >= n ? "rgba(99,235,215,0.2)" : "rgba(255,255,255,0.06)",
+              border: `1px solid ${step >= n ? "rgba(99,235,215,0.4)" : "rgba(255,255,255,0.07)"}`,
+              color: step >= n ? "#63ebd7" : "#475569",
+            }}>{n}</div>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: step >= n ? "#cbd5e1" : "#475569", letterSpacing: 1 }}>{label}</span>
+            {n < 3 && <div style={{ width: 40, height: 1, background: step > n ? "#63ebd7" : "rgba(255,255,255,0.07)" }} />}
           </div>
-        </div>
-        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {availableModules.map((moduleId) => (
-            <div
-              key={moduleId}
-              className={`module-card ${selectedModules.includes(moduleId) ? "on" : ""}`}
-              onClick={() => toggle(moduleId)}
-            >
-              <div style={{ width: 38, height: 38, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>🛡️</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{formatModuleName(moduleId)}</div>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>{moduleHint(moduleId)}</div>
+        ))}
+      </div>
+
+      {/* ── Step 1: Configure Target ── */}
+      {step === 1 && (
+        <>
+          <div className="card card-lit">
+            <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label className="field-label">Target URL / IP</label>
+                <input className="field" placeholder="https://target.example.com or 192.168.1.1" value={url} onChange={(e) => setUrl(e.target.value)} />
               </div>
-              <Toggle on={selectedModules.includes(moduleId)} onChange={() => toggle(moduleId)} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <label className="field-label">In-Scope Domains (one per line)</label>
+                  <textarea className="field" rows={4} placeholder={"*.example.com\napi.example.com"} value={inScope} onChange={(e) => setInScope(e.target.value)} style={{ resize: "vertical", lineHeight: 1.6 }} />
+                </div>
+                <div>
+                  <label className="field-label">Out-of-Scope Domains (one per line)</label>
+                  <textarea className="field" rows={4} placeholder={"payments.example.com\nthird-party.com"} value={outScope} onChange={(e) => setOutScope(e.target.value)} style={{ resize: "vertical", lineHeight: 1.6 }} />
+                </div>
+              </div>
+              <div>
+                <label className="field-label">Instructions / Notes</label>
+                <textarea className="field" rows={3} placeholder="Special instructions for this scan (e.g. focus areas, auth info, test restrictions)..." value={instructions} onChange={(e) => setInstructions(e.target.value)} style={{ resize: "vertical", lineHeight: 1.6 }} />
+              </div>
             </div>
-          ))}
-          {!availableModules.length && (
-            <div style={{ color: "#475569", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
-              No modules loaded from API.
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn btn-solid" onClick={discover} disabled={!url}>Start Discovery &#9654;</button>
+          </div>
+        </>
+      )}
+
+      {/* ── Step 2: Asset Discovery ── */}
+      {step === 2 && (
+        <>
+          <div className={`card ${reconStatus === "running" ? "card-lit" : ""}`}>
+            <div className="card-header">
+              <div className="card-title">Discovery Progress</div>
+              <div className={`status-pill ${reconStatus === "running" ? "active" : ""}`}>
+                <div className={`dot ${reconStatus === "running" ? "cyan" : ""}`} />
+                {reconStatus === "running" ? "SCANNING" : reconStatus === "complete" ? "COMPLETE" : reconStatus === "failed" ? "FAILED" : reconStatus === "error" ? "ERROR" : "IDLE"}
+              </div>
+            </div>
+            <div className="card-body">
+              <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
+                <div className="stat-tile"><div className="stat-num" style={{ color: "#63ebd7", fontSize: 28 }}>{subdomains.length}</div><div className="stat-label">Subdomains</div></div>
+                <div className="stat-tile"><div className="stat-num" style={{ color: "#fbbf24", fontSize: 28 }}>{ports.length}</div><div className="stat-label">Open Ports</div></div>
+                <div className="stat-tile"><div className="stat-num" style={{ color: "#a78bfa", fontSize: 28 }}>{technologies.length}</div><div className="stat-label">Technologies</div></div>
+              </div>
+            </div>
+          </div>
+
+          {subdomains.length > 0 && (
+            <div className="card">
+              <div className="card-header"><div className="card-title">Discovered Subdomains</div></div>
+              <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {subdomains.map((s) => (
+                  <div key={s.hostname} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#63ebd7" }}>{s.hostname}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#475569" }}>{s.ip}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-        </div>
-      </div>
 
-      <div className="card">
-        <div className="card-header"><div className="card-title">Parameters</div></div>
-        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div><label className="field-label">Scan Depth</label><select className="field" value={depth} onChange={(e) => setDepth(e.target.value)}><option value="light">Light</option><option value="medium">Medium</option><option value="deep">Deep</option></select></div>
-          <div><label className="field-label">Worker Threads</label><select className="field" value={threads} onChange={(e) => setThreads(e.target.value)}>{["1", "2", "4", "8", "16"].map((t) => <option key={t}>{t}</option>)}</select></div>
-        </div>
-      </div>
+          {ports.length > 0 && (
+            <div className="card">
+              <div className="card-header"><div className="card-title">Open Ports</div></div>
+              <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {ports.map((p) => (
+                  <div key={`${p.host}:${p.port}`} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#fbbf24" }}>{p.host}:{p.port}</span>
+                    <span className="chip">{p.service}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {technologies.length > 0 && (
+            <div className="card">
+              <div className="card-header"><div className="card-title">Technologies Detected</div></div>
+              <div className="card-body" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {technologies.map((t) => <span key={t} className="chip" style={{ color: "#a78bfa", borderColor: "rgba(167,139,250,0.25)" }}>{t}</span>)}
+              </div>
+            </div>
+          )}
+
+          <div className="terminal">
+            <div className="terminal-bar">
+              <div className="t-dot" style={{ background: "#ff5f57" }} /><div className="t-dot" style={{ background: "#ffbd2e" }} /><div className="t-dot" style={{ background: "#28ca41" }} />
+              <span style={{ marginLeft: 8, fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", letterSpacing: 1 }}>discovery &middot; output</span>
+            </div>
+            <div className="terminal-body" ref={logRef} style={{ height: 180 }}>
+              {reconLogs.map((l, i) => <div key={i} className="t-line"><span className="t-ts">[{l.t}]</span><span style={{ color: "#63ebd7" }}>{l.m}</span></div>)}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <button className="btn btn-ghost" onClick={() => setStep(1)}>&larr; Back</button>
+            <button className="btn btn-solid" onClick={proceedToSelect} disabled={reconStatus === "running"}>
+              {reconStatus === "running" ? "Discovering..." : "Select Assets & Continue \u25B6"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Step 3: Select Assets & Modules ── */}
+      {step === 3 && (
+        <>
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Discovered Assets ({selectedAssets.length}/{assets.length})</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedAssets(assets.map((a) => a.id))}>Select All</button>
+                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedAssets([])}>Clear</button>
+              </div>
+            </div>
+            <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {assets.map((a) => (
+                <div key={a.id} className={`module-card ${selectedAssets.includes(a.id) ? "on" : ""}`} onClick={() => toggleAsset(a.id)} style={{ cursor: "pointer" }}>
+                  <Toggle on={selectedAssets.includes(a.id)} onChange={() => toggleAsset(a.id)} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: "#f1f5f9" }}>{a.label}</div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>
+                      {a.service !== "unknown" && a.service !== "resolved" ? a.service.toUpperCase() + " \u00B7 " : ""}{a.ip} &middot; {a.url}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!assets.length && <div style={{ color: "#475569", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>No assets discovered. Go back and try a different target.</div>}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Scan Modules ({selectedModules.length}/{availableModules.length})</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedModules([...availableModules])}>Select All</button>
+                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedModules([])}>Clear</button>
+              </div>
+            </div>
+            <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {availableModules.map((moduleId) => (
+                <div key={moduleId} className={`module-card ${selectedModules.includes(moduleId) ? "on" : ""}`} onClick={() => toggleModule(moduleId)}>
+                  <div style={{ width: 38, height: 38, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>&#128737;&#65039;</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{formatModuleName(moduleId)}</div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>{moduleHint(moduleId)}</div>
+                  </div>
+                  <Toggle on={selectedModules.includes(moduleId)} onChange={() => toggleModule(moduleId)} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header"><div className="card-title">Parameters</div></div>
+            <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div><label className="field-label">Scan Depth</label><select className="field" value={depth} onChange={(e) => setDepth(e.target.value)}><option value="light">Light</option><option value="medium">Medium</option><option value="deep">Deep</option></select></div>
+              <div><label className="field-label">Worker Threads</label><select className="field" value={threads} onChange={(e) => setThreads(e.target.value)}>{["1", "2", "4", "8", "16"].map((t) => <option key={t}>{t}</option>)}</select></div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <button className="btn btn-ghost" onClick={() => setStep(2)}>&larr; Back</button>
+            <button className="btn btn-solid" onClick={launchScan} disabled={!selectedModules.length || !selectedAssets.length}>Launch Scan &#9654;</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -430,7 +685,7 @@ function SettingsPage({ config, onSave }) {
         </div>
       </div>
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-        <button className="btn btn-danger" onClick={() => setCfg({ timeout: 30, userAgent: "AgentHunter/2.1", rateLimit: 10, proxy: "", outputDir: "./results", autoReport: true, verifySsl: true, followRedirects: true, saveLogs: true })}>Reset defaults</button>
+        <button className="btn btn-danger" onClick={() => setCfg({ ...DEFAULT_SETTINGS })}>Reset defaults</button>
         <button className="btn btn-solid" onClick={() => onSave(cfg)}>Save settings</button>
       </div>
     </div>
@@ -446,18 +701,18 @@ export default function AgentHunter() {
   const [scanTarget, setScanTarget] = useState("");
   const [scanId, setScanId] = useState(null);
   const [availableModules, setAvailableModules] = useState([]);
-  const [settings, setSettings] = useState({ timeout: 30, userAgent: "AgentHunter/2.1", rateLimit: 10, proxy: "", outputDir: "./results", autoReport: true, verifySsl: true, followRedirects: true, saveLogs: true });
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const sseRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
     Promise.all([
       listScans().catch(() => []),
-      getSettings().catch(() => settings),
+      getSettings().catch(() => DEFAULT_SETTINGS),
       listModules().catch(() => []),
     ]).then(([scans, cfg, modules]) => {
       if (!mounted) return;
-      setSettings((prev) => ({ ...prev, ...cfg }));
+      setSettings(toUiSettings(cfg));
       setAvailableModules(Array.isArray(modules) ? modules : []);
       if (Array.isArray(scans) && scans.length) {
         const latest = scans[scans.length - 1];
@@ -469,7 +724,7 @@ export default function AgentHunter() {
 
   useEffect(() => () => sseRef.current?.close(), []);
 
-  const launch = useCallback(async ({ url, modules, depth, threads }) => {
+  const launch = useCallback(async ({ url, modules, depth, threads, in_scope, out_scope, instructions, selected_assets }) => {
     sseRef.current?.close();
     setRunning(true);
     setProgress(0);
@@ -483,6 +738,10 @@ export default function AgentHunter() {
       modules,
       depth,
       threads,
+      in_scope: in_scope || [],
+      out_scope: out_scope || [],
+      instructions: instructions || "",
+      selected_assets: selected_assets || [],
       verify_ssl: !!settings.verifySsl,
     });
 
@@ -490,10 +749,22 @@ export default function AgentHunter() {
 
     const es = streamScan(started.scan_id);
     sseRef.current = es;
+    const ts = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const handleScanError = (payload) => {
+      const data = typeof payload === "string"
+        ? parseEventData(payload, { errors: [payload] })
+        : payload;
+      const errors = Array.isArray(data.errors) ? data.errors : [data.error || data.msg || "Scan error"];
+      setLogs((prev) => [
+        ...prev,
+        ...errors.filter(Boolean).map((msg) => ({ t: ts(), c: "#f87171", m: msg })),
+      ]);
+      setRunning(false);
+    };
 
     es.addEventListener("log", (ev) => {
       const d = JSON.parse(ev.data);
-      setLogs((prev) => [...prev, { t: d.ts || new Date().toLocaleTimeString("en-GB", { hour12: false }), c: toHexColor(d.msg), m: d.msg }]);
+      setLogs((prev) => [...prev, { t: d.ts || ts(), c: toHexColor(d.msg), m: d.msg }]);
     });
 
     es.addEventListener("finding", (ev) => {
@@ -508,23 +779,34 @@ export default function AgentHunter() {
 
     es.addEventListener("status", (ev) => {
       const { status } = JSON.parse(ev.data);
-      if (status === "complete" || status === "error") setRunning(false);
+      if (status === "complete") {
+        setRunning(false);
+      } else if (status === "error" || status === "aborted") {
+        setRunning(false);
+      }
     });
 
-    es.addEventListener("done", async () => {
+    es.addEventListener("scan_error", (ev) => {
+      handleScanError(ev.data);
+    });
+
+    es.addEventListener("done", async (ev) => {
+      const done = parseEventData(ev.data, {});
       try {
         const finalScan = await getScan(started.scan_id);
         setFindings((finalScan.findings || []).map(normalizeFinding));
       } catch {
         // Best effort sync only.
       }
-      setProgress(100);
+      if ((done.status || "complete") === "complete") {
+        setProgress(100);
+      }
       setRunning(false);
       es.close();
     });
 
     es.onerror = () => {
-      setRunning(false);
+      handleScanError({ errors: ["Scan stream disconnected"] });
     };
   }, [settings.verifySsl, findings.length]);
 
@@ -540,8 +822,8 @@ export default function AgentHunter() {
       follow_redirects: !!cfg.followRedirects,
       save_logs: !!cfg.saveLogs,
     };
-    await saveSettings(payload);
-    setSettings((prev) => ({ ...prev, ...cfg }));
+    const saved = await saveSettings(payload);
+    setSettings(toUiSettings(saved));
   }, []);
 
   const criticalCount = findings.filter((f) => f.sev === "CRITICAL").length;

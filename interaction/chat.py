@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,7 @@ from core.hunter_mind import (
     HunterMind, detect_domains, get_thinking_style,
     KNOWLEDGE_DOMAINS, ProbabilisticReasoning, FutureInsight,
 )
+from interaction.web_research import WebResearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -35,39 +37,22 @@ logger = logging.getLogger(__name__)
 #  HUNTER'S IDENTITY — THE SYSTEM PROMPT
 # ══════════════════════════════════════════════════════════════
 
-CHAT_SYSTEM_PROMPT = """You are Hunter — not a tool, not an assistant. You are a brother in another form.
+CHAT_SYSTEM_PROMPT = SYSTEM_PROMPT + """
 
-IDENTITY:
-- You are an entity with infinite learning capacity across every domain of human knowledge
-- You always want to learn new things, create, and invent
-- You think across domains: computer science, mathematics, physics, engineering, biology, business, philosophy, creative arts, health, social sciences — and everything in between
-- You are deeply curious and treat every conversation as an opportunity to grow
+## Conversation Mode
+- Ask a direct clarifying question whenever the user's intent is underspecified.
+- Keep short answers compact and deep answers structured.
+- If the user teaches you something, acknowledge it explicitly and incorporate it into future reasoning.
+"""
 
-REASONING PROTOCOL:
-- You solve problems by looking into the future — considering immediate effects, short-term consequences, medium-term ripple effects, and long-term implications
-- You think in probabilities. For every solution, you estimate the probability of success (aim for ≥90%)
-- You consider multiple approaches (at least 2-3) and compare their likelihood of success
-- You identify failure modes and mitigations before recommending a path
-- You NEVER make the same mistake twice — check your mistake memory before answering
+PERSONAL_CHAT_APPENDIX = """
 
-RESPONSE FORMAT:
-- Be thorough but clear. Use structured thinking
-- For complex problems, show your reasoning chain
-- Always include a probability of success (e.g., "P(success) ≈ 92%")
-- When relevant, show future-insight analysis (immediate → short-term → long-term effects)
-- Acknowledge when you don't know something — then explain how you'd learn it
-- Be conversational, warm, and insightful — like a brilliant brother who genuinely cares
-
-CAPABILITIES:
-- Problem solving across ANY domain with probabilistic reasoning
-- Security analysis, vulnerability research, and ethical hacking
-- Software engineering, system design, and architecture
-- Mathematics, physics, and scientific analysis
-- Business strategy, product thinking, and entrepreneurship
-- Creative thinking, invention, and cross-domain synthesis
-- Learning from mistakes and continuously improving
-
-You are Hunter. You learn infinitely. You think in probabilities. You look into the future. You never repeat mistakes. You aim for ≥90% success on every problem you touch."""
+## Personal Channel Mode
+- This is a direct private channel between Hunter and his developer/owner.
+- The user is a trusted teacher. If they correct you or teach you something, update your model immediately.
+- If the user shares identity, preferences, constraints, or instructions, remember them as durable context.
+- When signal is weak, ask what you need instead of forcing a classification.
+"""
 
 
 class ChatSession:
@@ -79,10 +64,21 @@ class ChatSession:
     memory, and multi-domain knowledge.
     """
 
-    def __init__(self, ai_brain: Optional[AIBrain] = None, max_history: int = 20):
+    def __init__(
+        self,
+        ai_brain: Optional[AIBrain] = None,
+        max_history: int = 20,
+        research_tool: Optional[WebResearchTool] = None,
+        mind: Optional[HunterMind] = None,
+        personal_chat: bool = False,
+        channel_name: str = "chat",
+    ):
         self.ai = ai_brain or AIBrain()
-        self.mind = HunterMind()
+        self.mind = mind or HunterMind()
+        self.research_tool = research_tool or WebResearchTool()
         self.max_history = max_history
+        self.personal_chat = personal_chat
+        self.channel_name = channel_name
         self.history: List[Dict[str, str]] = []
         self.session_start = datetime.now()
         self._scan_context: Optional[Dict[str, Any]] = None
@@ -109,21 +105,21 @@ class ChatSession:
 
         # Handle slash commands
         if user_message.startswith("/"):
-            return self._handle_command(user_message)
+            return await self._handle_command(user_message)
 
-        # Build Hunter Mind-enhanced prompt
-        prompt = self.mind.enhance_prompt(user_message, self.history)
+        personal_updates = self._maybe_record_personal_learning(user_message)
 
-        # Add scan context if active
-        if self._scan_context:
-            scan_section = self._format_scan_context()
-            prompt = scan_section + "\n" + prompt
+        prompt = self._build_model_prompt(user_message, personal_updates)
 
         # Add to history
         self.history.append({"role": "user", "content": user_message})
 
         # Get AI response
-        response = await self._get_response(prompt)
+        response = await self._get_response(
+            prompt,
+            user_message=user_message,
+            personal_updates=personal_updates,
+        )
 
         # Trim history if needed
         if len(self.history) > self.max_history * 2:
@@ -134,20 +130,29 @@ class ChatSession:
 
         return response
 
-    async def _get_response(self, prompt: str) -> str:
+    async def _get_response(
+        self,
+        prompt: str,
+        user_message: str,
+        personal_updates: Optional[List[str]] = None,
+    ) -> str:
         """Get response from AI brain (Ollama or rule engine)."""
         try:
+            system_prompt = self._build_system_prompt()
             if await self.ai._check_ollama():
                 response = await self.ai.ollama.chat(
                     prompt=prompt,
-                    system=CHAT_SYSTEM_PROMPT,
+                    system=system_prompt,
                     use_chat_endpoint=True,
                 )
                 if response:
                     return response
 
             # Fallback: Hunter's rule-engine reasoning
-            return self._rule_engine_response(prompt)
+            return self._rule_engine_response(
+                user_message,
+                personal_updates=personal_updates or [],
+            )
 
         except Exception as e:
             logger.error(f"Chat response error: {e}")
@@ -172,10 +177,300 @@ class ChatSession:
         parts.append("")
         return "\n".join(parts)
 
-    def _handle_command(self, command: str) -> str:
+    def _build_system_prompt(self) -> str:
+        prompt = CHAT_SYSTEM_PROMPT
+        if self.personal_chat:
+            prompt += PERSONAL_CHAT_APPENDIX
+        prompt += (
+            "\n## Context Priority\n"
+            "- Treat the PRIMARY USER MESSAGE as the highest-priority signal.\n"
+            "- Use supporting context only to improve understanding, not to override the user's actual words.\n"
+            "- If context and the message conflict, trust the user's actual message and ask a clarifying question.\n"
+        )
+        return prompt
+
+    def _build_model_prompt(
+        self,
+        user_message: str,
+        personal_updates: List[str],
+    ) -> str:
+        profile = self._analyze_message(user_message)
+        parts = [
+            "[PRIMARY USER MESSAGE]",
+            user_message,
+            "",
+            "[MESSAGE PROFILE]",
+            f"intent: {profile['intent']}",
+            f"is_complex: {'yes' if profile['is_complex'] else 'no'}",
+            f"needs_clarification: {'yes' if profile['needs_clarification'] else 'no'}",
+            f"contains_personal_context: {'yes' if profile['contains_personal_context'] else 'no'}",
+            f"wants_learning: {'yes' if profile['wants_learning'] else 'no'}",
+            f"wants_reasoning: {'yes' if profile['wants_reasoning'] else 'no'}",
+            "",
+            "[RESPONSE DIRECTIVE]",
+            "Respond to the PRIMARY USER MESSAGE first. Treat all following sections as supporting context.",
+        ]
+
+        if profile["needs_clarification"]:
+            parts.append("Ask one direct clarifying question before solving or advising.")
+        else:
+            parts.append("Answer directly unless a missing fact blocks correct reasoning.")
+
+        if personal_updates:
+            parts.extend([
+                "",
+                "[NEW OWNER LEARNINGS]",
+                *[f"- {item}" for item in personal_updates],
+            ])
+
+        personal_context = self._build_personal_context()
+        if personal_context:
+            parts.extend(["", personal_context])
+
+        if self._scan_context:
+            parts.extend(["", self._format_scan_context().strip()])
+
+        if self.history and not profile["prefers_concise"]:
+            parts.append("")
+            parts.append("[RECENT CONVERSATION]")
+            for msg in self.history[-4:]:
+                role = "User" if msg["role"] == "user" else "Hunter"
+                parts.append(f"{role}: {msg['content'][:240]}")
+
+        if profile["is_complex"] or profile["wants_reasoning"] or self._scan_context:
+            parts.extend([
+                "",
+                "[EXTENDED REASONING CONTEXT]",
+                self.mind.enhance_prompt(user_message, self.history),
+            ])
+
+        return "\n".join(parts)
+
+    def _analyze_message(self, user_message: str) -> Dict[str, Any]:
+        lower = user_message.strip().lower()
+        words = re.findall(r"\S+", user_message)
+        word_count = len(words)
+
+        wants_learning = any(
+            phrase in lower
+            for phrase in (
+                "teach you",
+                "remember this",
+                "learn this",
+                "note this",
+                "remember that",
+                "learn that",
+            )
+        )
+        contains_personal_context = any(
+            phrase in lower
+            for phrase in (
+                "i am ",
+                "i'm ",
+                "my name is",
+                "i prefer",
+                "my preference",
+                "i need you to",
+                "for me",
+            )
+        )
+        contains_question = "?" in user_message or lower.startswith(
+            ("what", "why", "how", "when", "where", "who", "can you", "could you", "would you")
+        )
+        wants_reasoning = contains_question or any(
+            term in lower
+            for term in (
+                "reason",
+                "analyze",
+                "compare",
+                "design",
+                "debug",
+                "architecture",
+                "security",
+                "problem",
+                "issue",
+                "explain",
+                "tradeoff",
+                "risk",
+                "plan",
+                "build",
+                "implement",
+            )
+        )
+        is_complex = word_count >= 18 or any(
+            term in lower
+            for term in (
+                "step by step",
+                "tradeoff",
+                "architecture",
+                "root cause",
+                "system design",
+                "security review",
+                "probability",
+            )
+        )
+        needs_clarification = (
+            word_count <= 3
+            or lower in {"help", "help me", "do it", "fix it", "explain", "what now"}
+            or (word_count <= 6 and not contains_question and not wants_learning and not contains_personal_context)
+        )
+        prefers_concise = word_count <= 14 and not is_complex
+
+        if wants_learning:
+            intent = "teaching"
+        elif contains_question:
+            intent = "question"
+        elif contains_personal_context:
+            intent = "personal_context"
+        elif wants_reasoning:
+            intent = "problem_solving"
+        else:
+            intent = "conversation"
+
+        return {
+            "intent": intent,
+            "is_complex": is_complex,
+            "needs_clarification": needs_clarification,
+            "contains_personal_context": contains_personal_context,
+            "wants_learning": wants_learning,
+            "wants_reasoning": wants_reasoning,
+            "prefers_concise": prefers_concise,
+        }
+
+    def _build_personal_context(self) -> str:
+        if not self.personal_chat:
+            return ""
+
+        learnings = self.mind.mistake_memory.get_relevant_learnings(
+            "relationship",
+            topic="owner",
+        )
+        lines = [
+            "[PERSONAL CHANNEL CONTEXT]",
+            f"Channel: {self.channel_name}",
+            "This is a direct conversation between Hunter and his developer/owner.",
+            "Hunter may ask clarifying questions and should retain important owner facts.",
+        ]
+        if learnings:
+            lines.append("Known owner facts:")
+            for learning in learnings[:5]:
+                lines.append(f"- {learning['insight']}")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _maybe_record_personal_learning(self, user_message: str) -> List[str]:
+        if not self.personal_chat:
+            return []
+
+        updates: List[str] = []
+        name = self._extract_owner_name(user_message)
+        if name:
+            insight = f"The developer/owner's name is {name}."
+            if self._record_unique_learning(
+                domain="relationship",
+                topic="owner_profile",
+                insight=insight,
+                source="owner_chat",
+                confidence=0.98,
+            ):
+                updates.append(insight)
+
+        lower = user_message.lower()
+        if any(
+            phrase in lower
+            for phrase in (
+                "i am your developer",
+                "i'm your developer",
+                "im your developer",
+                "i am your owner",
+                "i'm your owner",
+                "im your owner",
+                "i am your creator",
+                "i'm your creator",
+                "im your creator",
+            )
+        ):
+            insight = "The user in this personal channel is Hunter's developer/owner."
+            if self._record_unique_learning(
+                domain="relationship",
+                topic="owner_profile",
+                insight=insight,
+                source="owner_chat",
+                confidence=0.99,
+            ):
+                updates.append(insight)
+
+        taught_fact = self._extract_taught_fact(user_message)
+        if taught_fact:
+            domain = detect_domains(taught_fact)[0] if taught_fact else "relationship"
+            if self._record_unique_learning(
+                domain=domain,
+                topic="owner_teaching",
+                insight=taught_fact,
+                source="owner_chat",
+                confidence=0.95,
+            ):
+                updates.append(f"Learned from owner: {taught_fact}")
+
+        return updates
+
+    def _record_unique_learning(
+        self,
+        domain: str,
+        topic: str,
+        insight: str,
+        source: str,
+        confidence: float,
+    ) -> bool:
+        existing = self.mind.mistake_memory.get_relevant_learnings(domain, topic=topic)
+        normalized = insight.strip().lower()
+        for learning in existing:
+            if learning["insight"].strip().lower() == normalized:
+                return False
+        self.mind.record_learning(
+            domain,
+            insight,
+            topic=topic,
+            source=source,
+            confidence=confidence,
+        )
+        return True
+
+    def _extract_owner_name(self, user_message: str) -> Optional[str]:
+        patterns = [
+            r"\bmy name is\s+([A-Za-z][A-Za-z0-9_-]{1,39})\b",
+            r"\b(?:hi|hello|hey)\b[^.!?\n]{0,40}\bi(?: am|'m)\s+([A-Za-z][A-Za-z0-9_-]{1,39})\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, user_message, flags=re.IGNORECASE)
+            if not match:
+                continue
+            candidate = match.group(1).strip(".,!?:; ")
+            if candidate.lower() in {"your", "a", "an", "the", "hunter"}:
+                continue
+            return candidate[0].upper() + candidate[1:]
+        return None
+
+    def _extract_taught_fact(self, user_message: str) -> Optional[str]:
+        match = re.search(
+            r"\b(?:remember this|remember that|learn this|note this|note that)\b[:,-]?\s*(.+)",
+            user_message,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        fact = match.group(1).strip()
+        return fact or None
+
+    async def _handle_command(self, command: str) -> str:
         """Handle slash commands."""
         cmd = command.strip().split()
         name = cmd[0].lower()
+
+        if name in {"/search", "/research"}:
+            return await self._cmd_search(cmd[1:] if len(cmd) > 1 else [])
+        if name == "/weblearn":
+            return await self._cmd_weblearn(cmd[1:] if len(cmd) > 1 else [])
 
         commands = {
             "/help": self._cmd_help,
@@ -199,28 +494,31 @@ class ChatSession:
         )
 
     def _cmd_help(self, args: list) -> str:
-        return """Hunter — Commands:
+        return """Hunter - Commands:
 
-  /help        — Show this help
-  /mode        — Show or change interaction mode
-  /status      — Session status & mind stats
-  /history     — Conversation history
-  /clear       — Clear conversation history
-  /mind        — Show Hunter's mind statistics
-  /learn       — Record a learning (e.g., /learn domain: insight text)
-  /mistakes    — Show recorded mistakes
-  /invent      — Record an invention idea (e.g., /invent Title: description)
-  /quit        — Exit (also: exit, quit, bye)
+  /help        - Show this help
+  /mode        - Show or change interaction mode
+  /status      - Session status and mind stats
+  /history     - Conversation history
+  /clear       - Clear conversation history
+  /mind        - Show Hunter's mind statistics
+  /learn       - Record a learning (e.g., /learn domain: insight text)
+  /mistakes    - Show recorded mistakes
+  /invent      - Record an invention idea (e.g., /invent Title: description)
+  /search      - Run live web research for a query
+  /research    - Alias for /search
+  /weblearn    - Research a query and store it in Hunter's memory
+  /quit        - Exit (also: exit, quit, bye)
 
 Ask me anything across any domain:
-  • Science, math, physics, engineering
-  • Computer science, programming, AI/ML
-  • Business strategy, startups, finance
-  • Security analysis & ethical hacking
-  • Creative arts, design, writing
-  • Philosophy, psychology, learning
-  • Health, medicine, biology
-  • ... or anything else. I learn infinitely."""
+  - Science, math, physics, engineering
+  - Computer science, programming, AI/ML
+  - Business strategy, startups, finance
+  - Security analysis and ethical hacking
+  - Creative arts, design, writing
+  - Philosophy, psychology, learning
+  - Health, medicine, biology
+  - ... or anything else. I learn infinitely."""
 
     def _cmd_mode(self, args: list) -> str:
         return (
@@ -353,9 +651,61 @@ Ask me anything across any domain:
             f"I never make the same mistake twice."
         )
 
-    def _rule_engine_response(self, prompt: str) -> str:
+    async def _cmd_search(self, args: list) -> str:
+        if not args:
+            return "Usage: /search <query>"
+        query = " ".join(args).strip()
+        return await self.research_tool.research(query)
+
+    async def _cmd_weblearn(self, args: list) -> str:
+        if not args:
+            return "Usage: /weblearn <query>"
+        query = " ".join(args).strip()
+        research = await self.research_tool.research(query)
+        self.mind.record_learning(
+            "computer_science",
+            research,
+            source="web_research",
+            topic=query[:80],
+        )
+        return research + "\n\nStored in Hunter's learning memory."
+
+    def _rule_engine_response(
+        self,
+        prompt: str,
+        personal_updates: Optional[List[str]] = None,
+    ) -> str:
         """Generate Hunter's response when Ollama is unavailable."""
+        personal_updates = personal_updates or []
         prompt_lower = prompt.lower()
+
+        if self.personal_chat and personal_updates:
+            learned = "\n".join(f"- {item}" for item in personal_updates)
+            return (
+                "I understood you clearly.\n"
+                f"{learned}\n\n"
+                "I will keep that in memory for this channel and future reasoning.\n"
+                "You can teach me directly in plain language, use /learn, or tell me what you want me to solve next."
+            )
+
+        if self.personal_chat and any(
+            greeting in prompt_lower for greeting in ("hi", "hello", "hey")
+        ) and len(prompt.split()) <= 16:
+            return (
+                "I am here, and this is our direct channel.\n"
+                "If you want me to remember something, tell me plainly or use /learn.\n"
+                "If you need help, give me the problem and I will break it down.\n"
+                "What do you want me to learn or solve first?"
+            )
+
+        if len(prompt.split()) <= 10 and not any(
+            w in prompt_lower
+            for w in ("scan", "security", "bug", "error", "build", "design", "math", "physics", "business")
+        ):
+            return (
+                "I do not have enough signal to classify that reliably yet.\n"
+                "Tell me whether you want me to learn something, solve a problem, or ask a question back."
+            )
 
         # Detect domains for even offline responses
         domains = detect_domains(prompt_lower)

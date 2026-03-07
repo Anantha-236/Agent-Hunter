@@ -10,9 +10,9 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 
-from config.settings import ENABLED_MODULES, SCAN_TIMEOUT_PER_MODULE, RL_REWARD_MAP
+from config.settings import ENABLED_MODULES, HUNTER_POLICY_BACKEND, SCAN_TIMEOUT_PER_MODULE, RL_REWARD_MAP
 from core.Hunter_brain import AIBrain
 from core.base_scanner import BaseScanner
 from core.bbp_policy import BBPPolicy, PolicyEnforcer
@@ -28,6 +28,9 @@ from core.rl_environment import EnvironmentState
 from core.waf_engine import WAFEngine
 from core.auth_session import AuthSession
 from core.payload_engine import AdaptivePayloadEngine
+from core.hunter_mind import HunterMind
+from core.consequence_analyzer import ConsequenceAnalyzer
+from core.responsibility_engine import ResponsibilityEngine
 from recon.crawler import Crawler
 from recon.fingerprint import Fingerprinter
 from utils.http_client import HttpClient
@@ -77,7 +80,8 @@ class Orchestrator:
                  auth_session=None, policy: BBPPolicy = None,
                  pre_engagement_checklist: PreEngagementChecklist = None,
                  auto_confirm: bool = False, verify_ssl: bool = True,
-                 crawl_depth: int = 3, http_concurrency: Optional[int] = None):
+                 crawl_depth: int = 3, http_concurrency: Optional[int] = None,
+                 http_settings: Optional[Dict[str, Any]] = None):
         self.target = target
         self.modules = modules or list(SCANNER_REGISTRY.keys())
         self.use_ai = use_ai
@@ -86,6 +90,7 @@ class Orchestrator:
         self.verify_ssl = verify_ssl
         self.crawl_depth = crawl_depth
         self.http_concurrency = http_concurrency
+        self.http_settings = dict(http_settings or {})
         self.cookies = cookies or {}
         self.headers = headers or {}
         self.use_tui = use_tui
@@ -98,6 +103,7 @@ class Orchestrator:
             modules=self.modules,
             state_file=os.path.join("reports", "rl_policy_state.json"),
             exploration_strategy="hybrid",
+            value_backend=HUNTER_POLICY_BACKEND,
         )
         self._scan_start_time = 0.0
         self._module_rewards: Dict[str, float] = {}
@@ -116,6 +122,12 @@ class Orchestrator:
         self.payload_engine = AdaptivePayloadEngine()
         self._tui = None
 
+        # -- Self-Learning & Reasoning --
+        self.mind = HunterMind()
+        self.consequence = ConsequenceAnalyzer()
+        self.responsibility = ResponsibilityEngine(hunter_mind=self.mind)
+        self._consequence_reports = []
+
         # -- Policy & Pre-Engagement Gate --
         self.policy = policy
         self.policy_enforcer = PolicyEnforcer(policy) if policy else None
@@ -126,13 +138,23 @@ class Orchestrator:
         # Merge auth cookies/headers if authenticated
         merged_cookies = {**self.cookies, **self.auth.get_auth_cookies()}
         merged_headers = {**self.headers, **self.auth.get_auth_headers()}
+        client_proxy = self.http_settings.get("proxy", self.proxy) or None
+        client_verify_ssl = self.http_settings.get("verify_ssl", self.verify_ssl)
+        client_timeout = self.http_settings.get("timeout")
+        client_follow_redirects = self.http_settings.get("follow_redirects", True)
+        client_rate_limit = self.http_settings.get("rate_limit")
+        client_user_agent = self.http_settings.get("user_agent")
 
         self._client = HttpClient(
             scope=self.target.scope, cookies=merged_cookies,
-            headers=merged_headers, proxy=self.proxy,
-            verify_ssl=self.verify_ssl,
+            headers=merged_headers, proxy=client_proxy,
+            verify_ssl=client_verify_ssl,
             policy_enforcer=self.policy_enforcer,
             concurrency=self.http_concurrency,
+            timeout=client_timeout,
+            follow_redirects=client_follow_redirects,
+            rate_limit=client_rate_limit,
+            user_agent=client_user_agent,
         )
         await self._client.__aenter__()
 
@@ -156,6 +178,7 @@ class Orchestrator:
             self.memory.close()
         self.ai.close()
         self.payload_engine.close()
+        self.mind.close()
 
     # ── Main Pipeline ─────────────────────────────────────────
 
@@ -174,7 +197,7 @@ class Orchestrator:
             discovered_params_count=len(self.target.discovered_params),
             ssl_present=self.target.url.startswith("https"),
             modules_run=list(state.modules_run),
-            modules_remaining=remaining or list(state.modules_pending),
+            modules_remaining=list(state.modules_pending if remaining is None else remaining),
             findings_count=len(state.findings),
             confirmed_count=sum(1 for f in state.findings if f.confirmed),
             severity_counts=dict(sev_counts),
@@ -191,15 +214,31 @@ class Orchestrator:
             step=len(state.modules_run),
         )
 
-    async def run(self, resume_from: str = None, thought_callback=None) -> ScanState:
+    async def run(
+        self,
+        resume_from: str = None,
+        thought_callback=None,
+        runtime_settings: Optional[Dict[str, Any]] = None,
+    ) -> ScanState:
         import time as _time
         self._scan_start_time = _time.monotonic()
+        if runtime_settings:
+            self.http_settings.update(runtime_settings)
+            self.proxy = self.http_settings.get("proxy", self.proxy) or None
+            self.verify_ssl = self.http_settings.get("verify_ssl", self.verify_ssl)
 
         state = ScanState(target=self.target, thought_callback=thought_callback)
         state.log_thought("Scan started")
 
         # Start RL episode (Feature 9: Episode lifecycle)
         self.rl.start_episode(episode_id=state.scan_id)
+
+        # Start responsibility tracking
+        self.responsibility.start_scan(state.scan_id)
+        in_scope = list(self.target.scope.allowed_domains) if self.target.scope else []
+        instructions = self.target.metadata.get("instructions", "")
+        for note in self.responsibility.pre_scan_check(self.target.url, in_scope, instructions):
+            state.log_thought(note)
 
         if self.memory:
             self.memory.start_scan(state.scan_id, self.target.url)
@@ -213,10 +252,9 @@ class Orchestrator:
                 gate_passed = await self._phase_pre_engagement(state)
                 if not gate_passed:
                     state.phase = "aborted"
-                    state.ended_at = datetime.utcnow()
                     state.log_thought("Scan ABORTED by pre-engagement gate")
-                    self._update_tui("complete")
-                    return state
+                    self._save_checkpoint(state, resume_phase="init")
+                    return self._finalize_run(state)
 
             # Phase 1: Recon
             if state.phase in ("init", "recon"):
@@ -247,34 +285,17 @@ class Orchestrator:
                 state.phase = "validate"
                 self._update_tui("validate")
                 await self._phase_validate(state)
+                self._save_checkpoint(state)
+
+            state.phase = "complete"
 
         except Exception as exc:
             logger.error(f"Scan error: {exc}", exc_info=True)
             state.errors.append(str(exc))
-            self._save_checkpoint(state)
-        finally:
-            state.phase = "complete"
-            state.ended_at = datetime.utcnow()
-            self._update_tui("complete")
-
-            # End RL episode and log summary
-            rl_summary = self.rl.end_episode()
-            state.log_thought(
-                f"RL episode: {rl_summary['steps']} steps, "
-                f"total_reward={rl_summary['total_reward']:.3f}, "
-                f"mean={rl_summary['mean_reward']:.3f}"
-            )
-
-            if self.memory:
-                self.memory.store_findings(state.scan_id, state.findings)
-                self.memory.finish_scan(state.scan_id, {
-                    **state.stats(),
-                    "total_score": self.reward.total_score,
-                }, reward_data=self.reward.to_dict())
-
-            self._remove_checkpoint()
-
-        return state
+            resume_phase = state.phase
+            state.phase = "failed"
+            self._save_checkpoint(state, resume_phase=resume_phase)
+        return self._finalize_run(state)
 
     # ── Phase: Pre-Engagement Gate ────────────────────────────
 
@@ -531,6 +552,11 @@ class Orchestrator:
             reward_ctx = self.reward.to_ai_context()
             memory_ctx = self.memory.to_ai_context(self.target.url) if self.memory else ""
 
+            # HunterMind: apply past learnings + mistakes to inform strategy
+            tech_query = f"scan strategy for {', '.join(self.target.technologies[:3]) or 'unknown'}"
+            mind_ctx = self.mind.enhance_prompt(tech_query)
+            state.log_thought(f"HunterMind context applied: {len(mind_ctx)} chars of experience")
+
             strategy = await self.ai.analyse_recon(state.target, reward_ctx, memory_ctx)
             prio = strategy.get("priority_modules", [])
             reasoning = strategy.get("reasoning", "")
@@ -582,6 +608,7 @@ class Orchestrator:
 
         scanner_pairs = [(n, load_scanner(n)) for n in state.modules_pending]
         scanner_pairs = [(n, c) for n, c in scanner_pairs if c]
+        state.modules_pending = [name for name, _ in scanner_pairs]
         scanner_map = {name: cls for name, cls in scanner_pairs}
 
         known = self.memory.get_known_findings(self.target.url) if self.memory else set()
@@ -591,25 +618,30 @@ class Orchestrator:
         if self._tui:
             self._tui.start_module("Scanning", total=total_modules * 100)
 
-        remaining = [name for name, _ in scanner_pairs]
-        while remaining:
+        while state.modules_pending:
             # Build RL environment state for state-aware action selection
-            env_state = self._build_env_state(state, remaining)
+            available_modules = list(state.modules_pending)
+            env_state = self._build_env_state(state)
             name = self.rl.choose_action(
-                available_modules=remaining,
+                available_modules=available_modules,
                 technologies=self.target.technologies,
                 env_state=env_state,
             )
+            if name not in scanner_map:
+                name = available_modules[0]
             cls = scanner_map[name]
             scanner = cls(self._client)
             self._tui_thought(f"RL selected: {name} (strategy={self.rl.exploration_strategy_name})")
-            remaining.remove(name)
+            state.modules_pending.remove(name)
 
             try:
                 await scanner.setup()
+                import time as _t
+                module_start = _t.monotonic()
                 findings = await asyncio.wait_for(
                     scanner.run(state), timeout=SCAN_TIMEOUT_PER_MODULE
                 )
+                module_end = _t.monotonic()
                 state.modules_run.append(name)
 
                 findings = findings or []
@@ -637,8 +669,8 @@ class Orchestrator:
                     name, finding_vuln_types, ai_assisted=asked_to_learn,
                 )
 
-                next_env_state = self._build_env_state(state, remaining)
-                is_last = len(remaining) == 0
+                next_env_state = self._build_env_state(state)
+                is_last = len(state.modules_pending) == 0
                 shaped = self.rl.observe(
                     name, rl_reward,
                     technologies=self.target.technologies,
@@ -660,10 +692,47 @@ class Orchestrator:
 
                 self._update_tui_score()
 
+                # -- Consequence analysis + responsibility per-finding --
+                module_fp_count = 0
                 for f in findings:
+                    f.module = name  # ensure module tag is set
+                    # Analyze consequences of this finding
+                    try:
+                        consequence = self.consequence.analyze(
+                            f, self.target, confirmed_findings_so_far=len([x for x in state.findings if x.confirmed])
+                        )
+                        self._consequence_reports.append(consequence)
+
+                        # Responsibility decision
+                        decision = self.responsibility.on_finding(f, consequence, state)
+                        state.log_thought(decision.to_thought())
+                        state.log_thought(consequence.to_thought())
+
+                        # Boost RL reward for high-consequence confirmed findings
+                        if consequence.escalation_score >= 3 and f.confirmed:
+                            extra = consequence.exploitation_likelihood * 0.5
+                            self._module_rewards[name] = self._module_rewards.get(name, 0) + extra
+                    except Exception as exc:
+                        logger.debug(f"Consequence analysis error for {f.vuln_type}: {exc}")
+
+                    if f.false_positive:
+                        module_fp_count += 1
                     state.add_finding(f)
                     if self._tui:
                         self._tui.add_finding(f.title, f.severity, f.url, name)
+
+                # Record module-level lessons in HunterMind
+                elapsed = module_end - module_start
+                self.responsibility.on_module_complete(
+                    name, findings, module_fp_count, self.target, elapsed_seconds=elapsed
+                )
+
+                # Check if responsibility engine says stop
+                stop, stop_reason = self.responsibility.should_stop_scanning()
+                if stop:
+                    state.log_thought(f"RESPONSIBILITY: Stopping scan — {stop_reason}")
+                    self._tui_thought(f"STOP: {stop_reason}")
+                    state.modules_pending.clear()
 
                 if self._tui:
                     self._tui.complete_module("Scanning")
@@ -671,21 +740,22 @@ class Orchestrator:
             except asyncio.TimeoutError:
                 state.errors.append(f"{name}: timeout after {SCAN_TIMEOUT_PER_MODULE}s")
                 self.reward.record("no_progress_action", module=name)
-                next_env = self._build_env_state(state, remaining)
+                next_env = self._build_env_state(state)
                 self.rl.observe(name, -1.0, technologies=self.target.technologies,
-                               next_env_state=next_env, done=len(remaining) == 0)
+                               next_env_state=next_env, done=len(state.modules_pending) == 0)
                 self._module_rewards[name] = -1.0
                 state.log_thought(f"RL update: {name} reward=-1.00 (timeout)")
             except Exception as exc:
                 state.errors.append(f"{name}: {exc}")
                 self.reward.record("incorrect_exploit_attempt", module=name,
                                    detail=str(exc))
-                next_env = self._build_env_state(state, remaining)
+                next_env = self._build_env_state(state)
                 self.rl.observe(name, -1.0, technologies=self.target.technologies,
-                               next_env_state=next_env, done=len(remaining) == 0)
+                               next_env_state=next_env, done=len(state.modules_pending) == 0)
                 self._module_rewards[name] = -1.0
                 state.log_thought(f"RL update: {name} reward=-1.00 (error)")
             finally:
+                self._save_checkpoint(state)
                 try:
                     await scanner.teardown()
                 except Exception:
@@ -823,13 +893,53 @@ class Orchestrator:
         reward_summary = self.reward.to_ai_context()
         return await self.ai.summarise_scan(state, reward_summary)
 
+    def _finalize_run(self, state: ScanState) -> ScanState:
+        if state.ended_at is None:
+            state.ended_at = datetime.utcnow()
+
+        self._update_tui(state.phase)
+
+        try:
+            rl_summary = self.rl.end_episode()
+            state.log_thought(
+                f"RL episode: {rl_summary['steps']} steps, "
+                f"total_reward={rl_summary['total_reward']:.3f}, "
+                f"mean={rl_summary['mean_reward']:.3f}"
+            )
+        except Exception as exc:
+            logger.warning(f"RL episode close error: {exc}")
+
+        try:
+            responsibility_report = self.responsibility.close_learning_loop(
+                state, self._consequence_reports
+            )
+            state.log_thought(responsibility_report.summary())
+        except Exception as exc:
+            logger.warning(f"Learning loop close error: {exc}")
+
+        if self.memory:
+            try:
+                self.memory.store_findings(state.scan_id, state.findings)
+                self.memory.finish_scan(state.scan_id, {
+                    **state.stats(),
+                    "total_score": self.reward.total_score,
+                }, reward_data=self.reward.to_dict())
+            except Exception as exc:
+                logger.warning(f"Memory finalization error: {exc}")
+
+        if state.phase == "complete":
+            self._remove_checkpoint()
+
+        return state
+
     # ── Checkpoint / Resume ───────────────────────────────────
 
-    def _save_checkpoint(self, state: ScanState) -> None:
+    def _save_checkpoint(self, state: ScanState, resume_phase: Optional[str] = None) -> None:
         try:
             data = {
                 "scan_id": state.scan_id,
                 "phase": state.phase,
+                "resume_phase": resume_phase or state.phase,
                 "target_url": state.target.url,
                 "modules_run": state.modules_run,
                 "modules_pending": state.modules_pending,
@@ -848,15 +958,18 @@ class Orchestrator:
         try:
             with open(checkpoint_path) as f:
                 data = json.load(f)
-            state.phase = data.get("phase", "init")
+            state.phase = data.get("resume_phase", data.get("phase", "init"))
             state.modules_run = data.get("modules_run", [])
             state.modules_pending = data.get("modules_pending", [])
             state.errors = data.get("errors", [])
             state.agent_thoughts = data.get("thoughts", [])
             if "reward" in data:
                 self.reward = RewardEngine.from_dict(data["reward"])
-            state.log_thought(f"Resumed from checkpoint (phase: {state.phase})")
-            logger.info(f"Scan resumed from phase: {state.phase}")
+            saved_phase = data.get("phase", state.phase)
+            state.log_thought(
+                f"Resumed from checkpoint (phase: {state.phase}, last_status: {saved_phase})"
+            )
+            logger.info(f"Scan resumed from phase: {state.phase} (last_status={saved_phase})")
         except Exception as exc:
             logger.warning(f"Could not load checkpoint: {exc}")
         return state

@@ -68,3 +68,23 @@ export function saveSettings(payload) {
 export function streamScan(scanId) {
   return new EventSource(`${BASE}/scan/${scanId}/stream`);
 }
+
+// ── Asset Discovery (Recon) ──────────────────────────────────
+
+/** Start asset discovery for a target. Returns { recon_id, status }. */
+export function startRecon(payload) {
+  return request("/recon", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Fetch full recon result. */
+export function getRecon(reconId) {
+  return request(`/recon/${reconId}`);
+}
+
+/** Open an SSE stream for live asset discovery. */
+export function streamRecon(reconId) {
+  return new EventSource(`${BASE}/recon/${reconId}/stream`);
+}

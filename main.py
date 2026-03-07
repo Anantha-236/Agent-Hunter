@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 
-from config.settings import LOG_LEVEL, OUTPUT_DIR, OLLAMA_MODEL, ENABLED_MODULES
+from config.settings import LOG_LEVEL, OUTPUT_DIR, OLLAMA_MODEL, ENABLED_MODULES, HUNTER_POLICY_BACKEND
 from core.models import Scope, Target
 from core.orchestrator import Orchestrator, CHECKPOINT_FILE
 from core.bbp_policy import BBPPolicy
@@ -21,6 +21,23 @@ from core.rl_agent import RLPolicyAgent
 from interaction.base import InteractionMode
 from interaction.manager import InteractionManager
 from reporting.reporter import Reporter
+
+
+def load_local_env() -> None:
+    """Load simple KEY=VALUE pairs from local env files without extra deps."""
+    for path in (".env.local", ".env"):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+        except Exception:
+            continue
 
 
 def setup_logging(level: str = LOG_LEVEL) -> None:
@@ -51,6 +68,7 @@ def print_rl_diagnostics(policy: RLPolicyAgent, top_n: int = 10) -> None:
     print(f"  Episodes          : {diag['total_episodes']}")
     print(f"  Learning updates  : {diag['total_learning_updates']}")
     print(f"  Q-function        : {diag['q_function_n_actions']} actions × {diag['q_function_state_dim']}d features")
+    print(f"  Value backend     : {diag.get('value_backend', 'linear')}")
     print(f"  Replay buffer     : {diag['replay_buffer_size']}/{diag['replay_buffer_capacity']} experiences")
 
     # ── Module table ───────────────────────────────────────────
@@ -72,7 +90,7 @@ def print_rl_diagnostics(policy: RLPolicyAgent, top_n: int = 10) -> None:
         return
 
     print(f"\n  Top {len(ranked)} Modules (by bandit Q-value):")
-    print(f"  {'Module':24} {'Q-val':>8} {'Pulls':>6} {'AvgRew':>8} {'S/F':>8} {'TS(α/β)':>12}")
+    print(f"  {'Module':24} {'Q-val':>8} {'Pulls':>6} {'AvgRew':>8} {'S/F':>8} {'TS(a/b)':>12}")
     print("  " + "-" * 70)
 
     for name, st in ranked:
@@ -84,7 +102,12 @@ def print_rl_diagnostics(policy: RLPolicyAgent, top_n: int = 10) -> None:
         )
 
     # ── Q-function value estimates ─────────────────────────────
-    if hasattr(policy, 'q_function') and policy.q_function and policy.q_function.state_dim > 0:
+    if (
+        hasattr(policy, 'q_function')
+        and policy.q_function
+        and getattr(policy.q_function, "state_dim", 0) > 0
+        and hasattr(policy.q_function, "weights")
+    ):
         print(f"\n  Q-function weight norms (per action):")
         action_names = policy.action_space.modules if hasattr(policy, 'action_space') else []
         for a_idx, w in enumerate(policy.q_function.weights):
@@ -113,7 +136,7 @@ def print_rl_diagnostics(policy: RLPolicyAgent, top_n: int = 10) -> None:
         for m in ranked_ts:
             a, b = m['thompson_alpha'], m['thompson_beta']
             mean = a / (a + b)
-            print(f"    {m['module']:24} mean={mean:.4f}  α={a:.1f}  β={b:.1f}")
+            print(f"    {m['module']:24} mean={mean:.4f}  a={a:.1f}  b={b:.1f}")
 
     print()
     print("=" * 72)
@@ -203,10 +226,15 @@ Interactive modes:
                         help="Voice name for TTS (engine-specific)")
     parser.add_argument("--voice-lang", default="en-US",
                         help="Voice recognition language (default: en-US)")
+    parser.add_argument("--telegram-bot", action="store_true",
+                        help="Run Hunter as a Telegram bot using TELEGRAM_BOT_TOKEN")
+    parser.add_argument("--telegram-poll-interval", type=float, default=1.0,
+                        help="Telegram polling backoff in seconds when idle")
     return parser.parse_args()
 
 
 async def main():
+    load_local_env()
     args = parse_args()
     setup_logging(args.log_level)
     logger = logging.getLogger("agent")
@@ -225,11 +253,27 @@ async def main():
             modules=modules,
             state_file=os.path.join(args.output_dir, "rl_policy_state.json"),
             exploration_strategy="hybrid",
+            value_backend=HUNTER_POLICY_BACKEND,
         )
         print_rl_diagnostics(policy, top_n=max(1, args.rl_top))
         return 0
 
     # ── Handle interactive mode ──────────────────────────────
+    if args.telegram_bot:
+        from integrations.telegram.bot import TelegramBotService
+
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        if not token:
+            logger.error("TELEGRAM_BOT_TOKEN is required for --telegram-bot")
+            return 1
+
+        service = TelegramBotService(
+            token=token,
+            poll_interval=max(0.2, args.telegram_poll_interval),
+        )
+        await service.start()
+        return 0
+
     if args.interact:
         mode = InteractionMode.from_string(args.interact)
         manager = InteractionManager(

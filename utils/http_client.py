@@ -34,15 +34,25 @@ class RateLimiter:
 
 class HttpClient:
     def __init__(self, scope=None, headers=None, cookies=None, proxy=None,
-                 verify_ssl=True, policy_enforcer=None, concurrency: Optional[int] = None):
+                 verify_ssl=True, policy_enforcer=None, concurrency: Optional[int] = None,
+                 timeout: Optional[int] = None, follow_redirects: bool = True,
+                 rate_limit: Optional[int] = None, user_agent: Optional[str] = None):
         self._scope = scope
         self._policy_enforcer = policy_enforcer
-        self._rate_limiter = RateLimiter()
+        delay = HTTP_DELAY_BETWEEN_REQUESTS
+        if rate_limit and rate_limit > 0:
+            delay = 1.0 / rate_limit
+        self._rate_limiter = RateLimiter(delay=delay)
         self._semaphore = asyncio.Semaphore(concurrency or HTTP_CONCURRENCY)
-        self._session_headers = {**DEFAULT_HEADERS, **(headers or {})}
+        self._session_headers = {**DEFAULT_HEADERS}
+        if user_agent:
+            self._session_headers["User-Agent"] = user_agent
+        self._session_headers.update(headers or {})
         self._cookies = cookies or {}
         self._proxy = proxy
         self._verify_ssl = verify_ssl
+        self._timeout = timeout or HTTP_TIMEOUT
+        self._follow_redirects = follow_redirects
         self._client = None
         self._no_redir_client = None
         self.request_log = []
@@ -50,12 +60,12 @@ class HttpClient:
     async def __aenter__(self):
         kwargs = dict(
             headers=self._session_headers, cookies=self._cookies,
-            timeout=HTTP_TIMEOUT, verify=self._verify_ssl,
-            follow_redirects=True,
+            timeout=self._timeout, verify=self._verify_ssl,
+            follow_redirects=self._follow_redirects,
         )
         no_redir_kwargs = dict(
             headers=self._session_headers, cookies=self._cookies,
-            timeout=HTTP_TIMEOUT, verify=self._verify_ssl,
+            timeout=self._timeout, verify=self._verify_ssl,
             follow_redirects=False,
         )
         if self._proxy:

@@ -57,6 +57,10 @@ OLLAMA_HEALTH_TIMEOUT: int = int(os.getenv(
     "OLLAMA_HEALTH_TIMEOUT",
     str(_cfg("ollama", "timeouts", "health_check_timeout_sec", default=5)),
 ))
+OLLAMA_RECHECK_INTERVAL_SEC: float = float(os.getenv(
+    "OLLAMA_RECHECK_INTERVAL_SEC",
+    str(_cfg("ollama", "timeouts", "recheck_interval_sec", default=30)),
+))
 
 # Ollama request defaults
 OLLAMA_TEMPERATURE: float = float(
@@ -155,9 +159,12 @@ HEALTH_CHECK_SEQUENCE: List[Dict] = _cfg("health_check_sequence", default=[])
 
 # ── RL / Reward config ────────────────────────────────────────
 RL_REWARD_MAP: Dict[str, int] = _cfg("rl_config", "reward_function", default={})
+HUNTER_POLICY_BACKEND: str = os.getenv(
+    "HUNTER_POLICY_BACKEND",
+    _cfg("rl_config", "value_backend", default="deep"),
+)
 
 # ── Convenience: full config access ───────────────────────────
 def get_config() -> Dict[str, Any]:
     """Return the full loaded config dict."""
     return dict(_CONFIG)
-

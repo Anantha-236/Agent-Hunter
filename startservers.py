@@ -3,19 +3,21 @@
 One-command local startup for Agent-Hunter.
 
 What it does:
-1. Installs Python dependencies from requirements.txt
-2. Installs dashboard dependencies (npm install)
-3. Starts FastAPI backend on http://localhost:8888
-4. Starts Vite dashboard on http://localhost:5173
-5. Waits for both services to become healthy
+1. Optionally installs Python dependencies from requirements.txt
+2. Optionally installs dashboard dependencies (npm install)
+3. Starts or reuses the FastAPI backend
+4. Starts or reuses the Vite dashboard
+5. Optionally starts the Telegram bot bridge
+6. Waits for the selected services to become healthy
 
 Usage:
     python startservers.py
+    python startservers.py --with-telegram --skip-python-install --skip-dashboard-install
 """
 
 from __future__ import annotations
 
-import atexit
+import argparse
 import os
 import shutil
 import subprocess
@@ -23,29 +25,50 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, MutableMapping, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parent
 DASHBOARD_DIR = ROOT / "dashboard"
 REQ_FILE = ROOT / "requirements.txt"
 
-API_URL = "http://localhost:8888/api/settings"
-UI_URL = "http://localhost:5173"
+
+@dataclass
+class ServiceSpec:
+    name: str
+    cmd: List[str]
+    cwd: Path
+    health_url: Optional[str] = None
 
 
 def log(msg: str) -> None:
     print(f"[startservers] {msg}")
 
 
-def ensure_command(name: str) -> None:
-    if shutil.which(name):
-        return
-    raise RuntimeError(f"Required command not found in PATH: {name}")
+def load_local_env(
+    root: Path = ROOT,
+    environ: Optional[MutableMapping[str, str]] = None,
+) -> MutableMapping[str, str]:
+    env = environ if environ is not None else os.environ
+    for rel_path in (".env.local", ".env"):
+        path = root / rel_path
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    env.setdefault(key.strip(), value.strip().strip("\"'"))
+        except OSError:
+            continue
+    return env
 
 
 def resolve_npm_command() -> str:
-    """Return the npm executable name/path that works on the current OS."""
     if os.name == "nt":
         npm_cmd = shutil.which("npm.cmd")
         if npm_cmd:
@@ -54,6 +77,81 @@ def resolve_npm_command() -> str:
     if npm_bin:
         return npm_bin
     raise RuntimeError("Required command not found in PATH: npm (or npm.cmd on Windows)")
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Agent-Hunter local service launcher")
+    parser.add_argument("--api-host", default="0.0.0.0", help="FastAPI bind host")
+    parser.add_argument("--api-port", type=int, default=8888, help="FastAPI port")
+    parser.add_argument("--ui-host", default="0.0.0.0", help="Dashboard bind host")
+    parser.add_argument("--ui-port", type=int, default=5173, help="Dashboard port")
+    parser.add_argument("--wait-timeout", type=int, default=120, help="Seconds to wait for HTTP services")
+    parser.add_argument("--skip-python-install", action="store_true", help="Skip pip install -r requirements.txt")
+    parser.add_argument("--skip-dashboard-install", action="store_true", help="Skip npm install in dashboard/")
+    parser.add_argument("--with-telegram", action="store_true", help="Start Hunter Telegram bot using TELEGRAM_BOT_TOKEN")
+    parser.add_argument("--telegram-poll-interval", type=float, default=1.0, help="Telegram polling backoff in seconds")
+    parser.add_argument("--no-reload", action="store_true", help="Disable uvicorn auto-reload")
+    parser.add_argument("--no-reuse-running", action="store_true", help="Always start new API/UI processes even if healthy services already exist")
+    return parser.parse_args(list(argv) if argv is not None else None)
+
+
+def api_health_url(port: int) -> str:
+    return f"http://localhost:{port}/api/settings"
+
+
+def ui_health_url(port: int) -> str:
+    return f"http://localhost:{port}"
+
+
+def build_service_specs(
+    args: argparse.Namespace,
+    npm_cmd: str,
+    python_executable: Optional[str] = None,
+) -> List[ServiceSpec]:
+    python_bin = python_executable or sys.executable
+
+    api_cmd = [
+        python_bin,
+        "-m",
+        "uvicorn",
+        "api_server:app",
+        "--host",
+        args.api_host,
+        "--port",
+        str(args.api_port),
+    ]
+    if not args.no_reload:
+        api_cmd.append("--reload")
+
+    specs = [
+        ServiceSpec(
+            name="api",
+            cmd=api_cmd,
+            cwd=ROOT,
+            health_url=api_health_url(args.api_port),
+        ),
+        ServiceSpec(
+            name="dashboard",
+            cmd=[npm_cmd, "run", "dev", "--", "--host", args.ui_host, "--port", str(args.ui_port)],
+            cwd=DASHBOARD_DIR,
+            health_url=ui_health_url(args.ui_port),
+        ),
+    ]
+
+    if args.with_telegram:
+        telegram_cmd = [python_bin, "main.py", "--telegram-bot"]
+        if args.telegram_poll_interval != 1.0:
+            telegram_cmd.extend(["--telegram-poll-interval", str(args.telegram_poll_interval)])
+        specs.append(
+            ServiceSpec(
+                name="telegram",
+                cmd=telegram_cmd,
+                cwd=ROOT,
+                health_url=None,
+            )
+        )
+
+    return specs
 
 
 def run_blocking(cmd: List[str], cwd: Optional[Path] = None) -> None:
@@ -74,9 +172,23 @@ def wait_http(url: str, timeout_sec: int = 120) -> bool:
     return False
 
 
+def partition_service_specs(
+    specs: Sequence[ServiceSpec],
+    reuse_running: bool,
+    health_check: Callable[[str, int], bool] = wait_http,
+) -> Tuple[List[ServiceSpec], List[ServiceSpec]]:
+    reused: List[ServiceSpec] = []
+    pending: List[ServiceSpec] = []
+    for spec in specs:
+        if reuse_running and spec.health_url and health_check(spec.health_url, timeout_sec=2):
+            reused.append(spec)
+        else:
+            pending.append(spec)
+    return reused, pending
+
+
 def start_process(cmd: List[str], cwd: Optional[Path] = None) -> subprocess.Popen:
     log(f"Starting: {' '.join(cmd)}")
-    # Keep child output visible in this terminal.
     return subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd else None,
@@ -96,67 +208,68 @@ def terminate_process(proc: Optional[subprocess.Popen], name: str) -> None:
         proc.kill()
 
 
-def main() -> int:
-    api_proc: Optional[subprocess.Popen] = None
-    ui_proc: Optional[subprocess.Popen] = None
+def validate_layout() -> None:
+    if not REQ_FILE.exists():
+        raise RuntimeError(f"Missing requirements file: {REQ_FILE}")
+    if not DASHBOARD_DIR.exists():
+        raise RuntimeError(f"Missing dashboard directory: {DASHBOARD_DIR}")
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = parse_args(argv)
+    load_local_env(ROOT)
+
+    active_procs: List[Tuple[str, subprocess.Popen]] = []
 
     try:
         os.chdir(ROOT)
+        validate_layout()
         npm_cmd = resolve_npm_command()
 
-        if not REQ_FILE.exists():
-            raise RuntimeError(f"Missing requirements file: {REQ_FILE}")
-        if not DASHBOARD_DIR.exists():
-            raise RuntimeError(f"Missing dashboard directory: {DASHBOARD_DIR}")
+        if args.with_telegram and not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+            raise RuntimeError("TELEGRAM_BOT_TOKEN is required when using --with-telegram")
 
-        # 1) Python deps
-        run_blocking([sys.executable, "-m", "pip", "install", "-r", str(REQ_FILE)])
+        if not args.skip_python_install:
+            run_blocking([sys.executable, "-m", "pip", "install", "-r", str(REQ_FILE)])
+        else:
+            log("Skipping Python dependency install.")
 
-        # 2) Dashboard deps
-        run_blocking([npm_cmd, "install"], cwd=DASHBOARD_DIR)
+        if not args.skip_dashboard_install:
+            run_blocking([npm_cmd, "install"], cwd=DASHBOARD_DIR)
+        else:
+            log("Skipping dashboard dependency install.")
 
-        # 3) Start backend
-        api_proc = start_process(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "api_server:app",
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8888",
-                "--reload",
-            ],
-            cwd=ROOT,
+        specs = build_service_specs(args, npm_cmd=npm_cmd)
+        reused, pending = partition_service_specs(
+            specs,
+            reuse_running=not args.no_reuse_running,
         )
 
-        # 4) Start frontend
-        ui_proc = start_process(
-            [npm_cmd, "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"],
-            cwd=DASHBOARD_DIR,
-        )
+        for spec in reused:
+            log(f"Reusing healthy {spec.name} service at {spec.health_url}")
 
-        # 5) Health checks
-        log("Waiting for API server...")
-        if not wait_http(API_URL, timeout_sec=120):
-            raise RuntimeError("API server did not become ready on :8888")
+        for spec in pending:
+            proc = start_process(spec.cmd, cwd=spec.cwd)
+            active_procs.append((spec.name, proc))
 
-        log("Waiting for dashboard...")
-        if not wait_http(UI_URL, timeout_sec=120):
-            raise RuntimeError("Dashboard did not become ready on :5173")
+        for spec in specs:
+            if spec.health_url:
+                log(f"Waiting for {spec.name} on {spec.health_url} ...")
+                if not wait_http(spec.health_url, timeout_sec=args.wait_timeout):
+                    raise RuntimeError(f"{spec.name} did not become ready at {spec.health_url}")
 
-        log("Agent-Hunter is online.")
-        log("Dashboard: http://localhost:5173")
-        log("API:       http://localhost:8888/docs")
-        log("Press Ctrl+C to stop both services.")
+        log("Agent-Hunter services are online.")
+        log(f"Dashboard: http://localhost:{args.ui_port}")
+        log(f"API:       http://localhost:{args.api_port}/docs")
+        if args.with_telegram:
+            log("Telegram:  enabled")
+        log("Press Ctrl+C to stop managed services.")
 
         while True:
-            # Exit if either process crashes.
-            if api_proc.poll() is not None:
-                raise RuntimeError("API server exited unexpectedly.")
-            if ui_proc.poll() is not None:
-                raise RuntimeError("Dashboard server exited unexpectedly.")
+            for name, proc in active_procs:
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    raise RuntimeError(f"{name} exited unexpectedly with code {exit_code}")
             time.sleep(1)
 
     except KeyboardInterrupt:
@@ -166,11 +279,9 @@ def main() -> int:
         log(f"ERROR: {exc}")
         return 1
     finally:
-        terminate_process(ui_proc, "dashboard")
-        terminate_process(api_proc, "api")
+        for name, proc in reversed(active_procs):
+            terminate_process(proc, name)
 
 
 if __name__ == "__main__":
-    # Ensure child processes are cleaned on parent shutdown.
-    atexit.register(lambda: None)
     raise SystemExit(main())

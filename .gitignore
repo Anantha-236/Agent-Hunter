@@ -32,8 +32,14 @@ reports/
 data/*.db
 
 # Local environment files
+.env
+.env.local
+*.local.env
 docker-fleet/.env
 
 # Agents skills cache
 .agents/
 skills-lock.json
+
+# Temp / waste files
+temp/

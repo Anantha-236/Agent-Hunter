@@ -140,6 +140,7 @@
 
     "rl_config": {
       "algorithm": "custom_reward_engine",
+      "value_backend": "deep",
       "reward_function": {
         "successful_exploit":           100,
         "confirmed_finding":             50,

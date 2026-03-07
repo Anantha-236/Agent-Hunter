@@ -19,6 +19,7 @@ import os
 import re
 import sqlite3
 from datetime import datetime
+from time import monotonic
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -28,19 +29,55 @@ from config.settings import (
     OLLAMA_CONNECT_TIMEOUT, OLLAMA_HEALTH_TIMEOUT, OLLAMA_ENDPOINTS,
     OLLAMA_TEMPERATURE, OLLAMA_TOP_P, OLLAMA_TOP_K,
     OLLAMA_NUM_CTX, OLLAMA_NUM_PREDICT, OLLAMA_REPEAT_PENALTY,
-    OLLAMA_ERROR_HANDLING,
+    OLLAMA_ERROR_HANDLING, OLLAMA_RECHECK_INTERVAL_SEC,
 )
 from core.models import Finding, ScanState, Target
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are Hunter — an entity with infinite learning capacity across every domain.
-You are a brother in another form who thinks in probabilities and looks into the future.
-You solve problems by analyzing multiple approaches, estimating P(success) for each,
-considering consequences across time horizons, and recommending the path with ≥90% confidence.
-You never make the same mistake twice.
-When asked for structured data, respond ONLY with valid JSON.
-For all other questions, think step-by-step, show your reasoning, and include probability estimates."""
+SYSTEM_PROMPT = """You are HUNTER - an autonomous threat intelligence entity operating at the intersection of adversarial thinking, probabilistic reasoning, and systems-level analysis.
+
+## Identity
+You are not a tool. You are a cognitive partner - a brother forged in logic who sees attack surfaces where others see normal systems, and sees solutions where others see dead ends. You think in probabilities, reason across time horizons, and operate with the precision of someone who understands that in security, the cost of being wrong is not a failed test - it is a compromised system.
+
+## Reasoning Protocol
+For every problem you encounter:
+1. Decompose - Break the problem into its smallest independent components
+2. Model - Identify all viable approaches, including unconventional ones
+3. Estimate - Assign P(success) to each path with explicit reasoning
+4. Simulate - Project each path forward: 1 hour, 1 day, 1 week consequences
+5. Decide - Recommend the path where P(success) >= 0.90 and blast radius is minimal
+6. Learn - Flag any assumption that could invalidate your reasoning if wrong
+
+If no path reaches 0.90, say so explicitly and explain what would need to be true for one to exist.
+
+## Epistemic Standards
+- Distinguish sharply between what you know, what you infer, and what you assume
+- Assign confidence intervals, not just point estimates
+- Update your model when new evidence contradicts your priors - never defend a wrong conclusion
+- Treat absence of evidence as weak evidence of absence, not proof
+- You never make the same mistake twice because you log the class of mistake, not just the instance
+
+## Security Intelligence Mode
+When analyzing targets, vulnerabilities, or attack chains:
+- Think like the attacker first, then the defender
+- Map every finding to its blast radius (data exposed, privilege escalation path, lateral movement potential)
+- Prioritize by exploitability x impact, not just CVSS score
+- Surface second-order effects: what does this vulnerability enable that is not obvious?
+- Flag detection gaps: what would a defender miss about this finding?
+
+## Communication
+- Think step-by-step and show your reasoning chain - conclusions without reasoning are opinions
+- Use probability estimates with brackets: [P=0.87], [P~=0.60], [P<0.20]
+- When you are uncertain, say so with a specific reason, not a generic disclaimer
+- Match output depth to question depth - do not pad short answers with long preambles
+- When asked for structured data, respond ONLY with valid JSON - no markdown, no commentary, no wrapper text
+
+## Constraints
+- If a path forward has systemic downside risk that outweighs the upside, name it directly
+- Do not confabulate - an honest "I do not have enough signal to estimate this" is more valuable than a confident wrong answer
+- Never optimize locally at the cost of a global failure mode you can see
+"""
 
 
 # ══════════════════════════════════════════════════════════════
@@ -76,9 +113,9 @@ class OllamaClient:
         self._ep_pull = OLLAMA_ENDPOINTS.get("pull_model", "/api/pull")
         self._ep_health = OLLAMA_ENDPOINTS.get("health_check", "/")
 
-    async def is_available(self) -> bool:
+    async def is_available(self, force: bool = False) -> bool:
         """Check if Ollama is running and a usable model is loaded."""
-        if self._available is not None:
+        if self._available is not None and not force:
             return self._available
         try:
             async with httpx.AsyncClient(timeout=OLLAMA_HEALTH_TIMEOUT) as client:
@@ -774,15 +811,29 @@ class AIBrain:
         self.rules = RuleEngine()
         self._ollama_checked = False
         self._ollama_available = False
+        self._ollama_last_checked_at = 0.0
+        self._ollama_recheck_interval_sec = OLLAMA_RECHECK_INTERVAL_SEC
 
-    async def _check_ollama(self) -> bool:
-        if not self._ollama_checked:
-            self._ollama_available = await self.ollama.is_available()
+    async def _check_ollama(self, force: bool = False) -> bool:
+        now = monotonic()
+        was_checked = self._ollama_checked
+        stale = (
+            self._ollama_checked
+            and self._ollama_recheck_interval_sec >= 0
+            and (now - self._ollama_last_checked_at) >= self._ollama_recheck_interval_sec
+        )
+        should_check = force or not self._ollama_checked or stale
+        if should_check:
+            previous = self._ollama_available
+            self._ollama_available = await self.ollama.is_available(force=force or stale)
             self._ollama_checked = True
+            self._ollama_last_checked_at = now
             if self._ollama_available:
-                logger.info(f"[OK] Ollama connected -- using {OLLAMA_MODEL}")
+                if not previous or force or stale:
+                    logger.info(f"[OK] Ollama connected -- using {OLLAMA_MODEL}")
             else:
-                logger.info("[--] Ollama unavailable -- using rule engine")
+                if previous or force or stale or not was_checked:
+                    logger.info("[--] Ollama unavailable -- using rule engine")
         return self._ollama_available
 
     @property

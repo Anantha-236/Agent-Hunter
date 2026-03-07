@@ -4,38 +4,115 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlparse
+
 from config.settings import Severity
 import re
 
 @dataclass
 class Scope:
-    allowed_domains: List[str]
+    allowed_domains: List[str] = field(default_factory=list)
     allowed_urls: List[str] = field(default_factory=list)
     excluded_domains: List[str] = field(default_factory=list)
     excluded_paths: List[str] = field(default_factory=list)
 
+    @staticmethod
+    def _matches_pattern(value: str, pattern: str) -> bool:
+        if not pattern:
+            return False
+        rule = pattern.strip()
+        if rule.startswith("re:"):
+            return bool(re.fullmatch(rule[3:], value))
+        wildcard = re.escape(rule).replace(r"\*", ".*")
+        return bool(re.fullmatch(wildcard, value))
+
+    @staticmethod
+    def _normalize_url(url: str):
+        candidate = url.strip()
+        if "://" not in candidate:
+            candidate = f"https://{candidate}"
+        parsed = urlparse(candidate)
+        scheme = parsed.scheme or "https"
+        host = (parsed.hostname or "").lower()
+        default_port = 443 if scheme == "https" else 80
+        port = parsed.port or default_port
+        path = parsed.path or "/"
+        return scheme, host, port, path, parsed
+
+    def _allowed_url_matches(self, url: str, allowed_url: str) -> bool:
+        if allowed_url.startswith("re:"):
+            return self._matches_pattern(url, allowed_url)
+
+        url_scheme, url_host, url_port, url_path, _ = self._normalize_url(url)
+        allowed_scheme, allowed_host, allowed_port, allowed_path, _ = self._normalize_url(allowed_url)
+
+        if url_host != allowed_host:
+            return False
+        if url_port != allowed_port:
+            return False
+        if allowed_scheme and url_scheme != allowed_scheme:
+            return False
+        if allowed_path in ("", "/"):
+            return True
+        if url_path == allowed_path:
+            return True
+        return url_path.startswith(f"{allowed_path.rstrip('/')}/")
+
+    def _allowed_url_host_matches(self, host: str, allowed_url: str) -> bool:
+        if allowed_url.startswith("re:"):
+            return False
+        _, allowed_host, _, _, _ = self._normalize_url(allowed_url)
+        return host == allowed_host
+
+    def is_host_in_scope(self, host: str) -> bool:
+        candidate_host = (host or "").lower()
+        if not candidate_host:
+            return False
+
+        if any(self._matches_pattern(candidate_host, pattern) for pattern in self.excluded_domains):
+            return False
+
+        if self.allowed_domains and not any(
+            self._matches_pattern(candidate_host, pattern) for pattern in self.allowed_domains
+        ):
+            return False
+
+        if self.allowed_urls and not any(
+            self._allowed_url_host_matches(candidate_host, allowed_url)
+            for allowed_url in self.allowed_urls
+        ):
+            return False
+
+        return True
+
     def is_in_scope(self, url: str) -> bool:
-        from urllib.parse import urlparse
-        parsed = urlparse(url)
-        host = parsed.hostname or ""
-        for excl in self.excluded_domains:
-            pattern = excl.replace(".", r"\.").replace("*", ".*")
-            if re.fullmatch(pattern, host):
-                return False
+        _, host, _, path, parsed = self._normalize_url(url)
+        if not host:
+            return False
+
+        if not self.is_host_in_scope(host):
+            return False
+
         for path in self.excluded_paths:
             if parsed.path.startswith(path):
                 return False
-        for allowed in self.allowed_domains:
-            pattern = allowed.replace(".", r"\.").replace("*", ".*")
-            if re.fullmatch(pattern, host):
-                return True
-        return False
+
+        if self.allowed_urls and not any(
+            self._allowed_url_matches(url, allowed_url)
+            for allowed_url in self.allowed_urls
+        ):
+            return False
+
+        return True
 
 @dataclass
 class Target:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     url: str = ""
     scope: Optional[Scope] = None
+    selected_assets: List[str] = field(default_factory=list)
+    in_scope: List[str] = field(default_factory=list)
+    out_scope: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     technologies: List[str] = field(default_factory=list)
     discovered_urls: List[str] = field(default_factory=list)

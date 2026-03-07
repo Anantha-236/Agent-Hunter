@@ -30,6 +30,7 @@ from collections import deque
 from dataclasses import dataclass, field, asdict
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from core.deep_q_backend import DeepQApproximator
 from core.rl_environment import (
     ActionSpace,
     EnvironmentState,
@@ -766,6 +767,7 @@ class RLPolicyAgent:
         curiosity_weight: float = 0.1,
         confidence_threshold: float = 0.7,
         reward_table: Optional[Dict[str, float]] = None,
+        value_backend: str = "linear",
     ):
         # -- Action Space --
         self.action_space = ActionSpace(modules)
@@ -774,13 +776,24 @@ class RLPolicyAgent:
         self.encoder = StateEncoder(self.action_space)
 
         # -- Value Function / Q approximator (Features 7 + 8) --
-        self.q_function = LinearQApproximator(
-            state_dim=self.encoder.dim,
-            n_actions=self.action_space.n,
-            learning_rate=alpha,
-            lambda_trace=lambda_trace,
-            gamma=gamma,
-        )
+        self.value_backend = (value_backend or "linear").strip().lower()
+        if self.value_backend == "deep":
+            self.q_function = DeepQApproximator(
+                state_dim=self.encoder.dim,
+                n_actions=self.action_space.n,
+                learning_rate=min(alpha, 0.005),
+                lambda_trace=lambda_trace,
+                gamma=gamma,
+            )
+        else:
+            self.value_backend = "linear"
+            self.q_function = LinearQApproximator(
+                state_dim=self.encoder.dim,
+                n_actions=self.action_space.n,
+                learning_rate=alpha,
+                lambda_trace=lambda_trace,
+                gamma=gamma,
+            )
 
         # -- Exploration Strategy (Features 3 + 6) --
         strategy_cls = EXPLORATION_STRATEGIES.get(exploration_strategy, HybridExploration)
@@ -1296,6 +1309,7 @@ class RLPolicyAgent:
             "epsilon_decay": self.epsilon_decay,
             "gamma": self.gamma,
             "lambda_trace": self.lambda_trace,
+            "value_backend": self.value_backend,
             "exploration_strategy": self.exploration_strategy_name,
             "module_states": {
                 k: asdict(v) for k, v in self.module_states.items()
@@ -1334,6 +1348,7 @@ class RLPolicyAgent:
             self.epsilon_decay = float(data.get("epsilon_decay", self.epsilon_decay))
             self.gamma = float(data.get("gamma", self.gamma))
             self.lambda_trace = float(data.get("lambda_trace", self.lambda_trace))
+            self.value_backend = data.get("value_backend", self.value_backend)
 
             if isinstance(self.exploration, EpsilonGreedy):
                 self.exploration.epsilon = self.epsilon
@@ -1411,6 +1426,7 @@ class RLPolicyAgent:
             eps_str = f"temp={self.exploration.temperature:.3f}"
 
         parts = [
+            f"backend={self.value_backend}",
             f"strategy={self.exploration_strategy_name}",
             eps_str,
             f"replay={len(self.replay_buffer)}",
@@ -1432,6 +1448,7 @@ class RLPolicyAgent:
         )
 
         return {
+            "value_backend": self.value_backend,
             "exploration_strategy": self.exploration_strategy_name,
             "epsilon": (
                 self.exploration.epsilon
