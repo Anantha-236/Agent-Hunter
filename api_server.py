@@ -94,6 +94,14 @@ _settings: Dict[str, Any] = _model_to_dict(SettingsPayload())
 
 # ── Helpers ────────────────────────────────────────────────────
 
+# Dashboard sends high-level groups; orchestrator needs concrete scanner IDs.
+MODULE_GROUP_MAP: Dict[str, List[str]] = {
+    "web": list(ENABLED_MODULES),
+    "sast": ["misconfig_scanner"],
+    "dependency": ["misconfig_scanner"],
+    "network": ["subdomain_takeover", "host_header"],
+}
+
 DEPTH_TO_CRAWL = {
     "light": 1,
     "medium": 3,
@@ -109,6 +117,27 @@ def _resolve_crawl_depth(depth: str) -> int:
         return max(1, min(int(depth_key), 10))
     except ValueError:
         return DEPTH_TO_CRAWL["medium"]
+
+
+def _resolve_modules(requested_modules: Optional[List[str]]) -> List[str]:
+    """Resolve UI module groups and scanner IDs to a valid scanner list."""
+    if not requested_modules:
+        return list(ENABLED_MODULES)
+
+    resolved: List[str] = []
+    for module in requested_modules:
+        key = (module or "").strip().lower()
+        if key in MODULE_GROUP_MAP:
+            resolved.extend(MODULE_GROUP_MAP[key])
+        elif key in ENABLED_MODULES:
+            resolved.append(key)
+
+    # If request only had unknown groups, fail open to default scanners.
+    if not resolved:
+        return list(ENABLED_MODULES)
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(resolved))
 
 def _finding_to_dict(f: Finding) -> dict:
     return {
@@ -155,7 +184,7 @@ async def _run_scan(scan_id: str, req: ScanRequest):
         )
 
     target = Target(url=req.url, scope=scope)
-    modules = req.modules or list(ENABLED_MODULES)
+    modules = _resolve_modules(req.modules)
     crawl_depth = _resolve_crawl_depth(req.depth)
     max_threads = max(1, min(req.threads, 64))
 
