@@ -47,7 +47,7 @@ class CRLFInjectionScanner(BaseScanner):
             # Determine severity based on what was injected
             if "Set-Cookie" in headers_str or "Location" in headers_str:
                 severity = Severity.HIGH
-                vuln_sub = "header_injection_critical"
+                vuln_sub = "header_injection"
             else:
                 severity = Severity.MEDIUM
                 vuln_sub = "header_injection"

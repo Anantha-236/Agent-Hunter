@@ -374,6 +374,21 @@ VALIDATION_RULES = {
         "confirmed_if": lambda f: "doctype" in f.evidence.lower() or "entity" in f.evidence.lower(),
         "severity": "medium",
     },
+    "xxe": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "signature" in f.evidence.lower() or "external entity" in f.description.lower(),
+        "severity": "high",
+    },
+    "xxe_file_read": {
+        "base_confidence": 90,
+        "confirmed_if": lambda f: any(sig in f.evidence.lower() for sig in ["root:x:0", "win.ini", "/etc/passwd"]),
+        "severity": "critical",
+    },
+    "xxe_ssrf": {
+        "base_confidence": 95,
+        "confirmed_if": lambda f: any(sig in f.evidence.lower() for sig in ["instance-id", "ami-id", "meta-data"]),
+        "severity": "critical",
+    },
     "graphql_introspection": {
         "base_confidence": 70,
         "confirmed_if": lambda f: "__schema" in f.evidence.lower() or "introspection" in f.title.lower(),

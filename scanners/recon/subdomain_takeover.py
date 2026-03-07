@@ -162,6 +162,7 @@ class SubdomainTakeoverScanner(BaseScanner):
     async def _resolve_cname(self, hostname: str) -> Optional[str]:
         """Attempt CNAME resolution. Returns CNAME target, '' if no CNAME, or None on failure."""
         import subprocess
+        import socket
         try:
             # Use nslookup for cross-platform CNAME resolution
             result = await asyncio.to_thread(
@@ -178,6 +179,11 @@ class SubdomainTakeoverScanner(BaseScanner):
                 return cname_match.group(1).rstrip(".")
             return ""  # Resolved but no CNAME
         except Exception as exc:
-            logger.debug(f"CNAME lookup failed for {hostname}: {exc}")
-            return None  # Lookup failed entirely
+            logger.debug(f"CNAME lookup failed for {hostname}: {exc}; falling back to A lookup")
+            try:
+                # Fallback keeps scanner functional on systems without nslookup.
+                await asyncio.to_thread(socket.gethostbyname, hostname)
+                return ""  # Host resolves but CNAME unknown
+            except Exception:
+                return None  # Lookup failed entirely
         return None
