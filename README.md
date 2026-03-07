@@ -115,15 +115,17 @@ Add screenshots of your project here.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a new branch
-3. Commit your changes
-4. Push the branch
-5. Open a pull request
+1. Open an issue describing the proposed change.
+2. Wait for written approval from the repository owner.
+3. Create a branch and submit a pull request.
+4. All pull requests require explicit owner review and approval.
+5. Unauthorized modifications or redistribution are not permitted.
 
 ## License
 
-This project is licensed under the MIT License.
+Proprietary - All Rights Reserved.
+
+No part of this repository may be copied, modified, distributed, sublicensed, or used for commercial or personal derivative work without explicit written permission from the repository owner.
 
 ## Author
 
