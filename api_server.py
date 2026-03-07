@@ -338,6 +338,12 @@ async def list_scans():
     ]
 
 
+@app.get("/api/modules")
+async def list_modules():
+    """List available scanner module IDs for dashboard selection."""
+    return list(ENABLED_MODULES)
+
+
 @app.get("/api/settings")
 async def get_settings():
     return _settings

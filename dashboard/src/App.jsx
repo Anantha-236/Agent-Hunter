@@ -3,6 +3,7 @@ import {
   startScan as apiStartScan,
   getScan,
   listScans,
+  listModules,
   getSettings,
   saveSettings,
   streamScan,
@@ -113,6 +114,35 @@ function Badge({ s }) {
   return <span className={`badge badge-${s}`}>{s}</span>;
 }
 
+function formatModuleName(moduleId) {
+  return moduleId
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function moduleHint(moduleId) {
+  const hints = {
+    sql_injection: "SQL injection detection",
+    ssti: "Server-side template injection",
+    crlf_injection: "Header injection and response splitting",
+    command_injection: "OS command injection testing",
+    xxe_scanner: "XML external entity injection",
+    xss_scanner: "Reflected, stored, and DOM XSS",
+    ssrf: "Server-side request forgery",
+    graphql_scanner: "GraphQL attack surface checks",
+    auth_scanner: "Authentication weaknesses",
+    idor_scanner: "Object-level authorization checks",
+    csrf_scanner: "Cross-site request forgery",
+    race_condition: "Concurrent request race checks",
+    path_traversal: "File path traversal tests",
+    misconfig_scanner: "Security misconfiguration checks",
+    host_header: "Host header attack checks",
+    open_redirect: "Open redirect tests",
+    subdomain_takeover: "Dangling DNS and takeover checks",
+  };
+  return hints[moduleId] || "Vulnerability scanner module";
+}
+
 function Dashboard({ onNavigate, scanning, findings, scanTarget }) {
   const crit = findings.filter((f) => f.sev === "CRITICAL").length;
   const high = findings.filter((f) => f.sev === "HIGH").length;
@@ -182,18 +212,31 @@ function Dashboard({ onNavigate, scanning, findings, scanTarget }) {
   );
 }
 
-function ScanPage({ onLaunch }) {
+function ScanPage({ onLaunch, availableModules }) {
   const [url, setUrl] = useState("");
-  const [modules, setModules] = useState({ web: true, sast: true, dependency: true, network: false });
+  const [selectedModules, setSelectedModules] = useState([]);
   const [depth, setDepth] = useState("medium");
   const [threads, setThreads] = useState("4");
-  const toggle = (k) => setModules((m) => ({ ...m, [k]: !m[k] }));
-  const mods = [
-    { k: "web", icon: "🌐", label: "Web App", desc: "XSS · SQLi · CSRF · SSRF · IDOR" },
-    { k: "sast", icon: "🔍", label: "Code (SAST)", desc: "Secrets · patterns · weak crypto" },
-    { k: "dependency", icon: "📦", label: "Dependencies", desc: "CVE / NVD package audit" },
-    { k: "network", icon: "📡", label: "Network", desc: "Port scanning · service detection" },
-  ];
+
+  useEffect(() => {
+    if (!Array.isArray(availableModules) || !availableModules.length) return;
+    setSelectedModules((prev) => {
+      if (!prev.length) return [...availableModules];
+      const valid = prev.filter((m) => availableModules.includes(m));
+      return valid.length ? valid : [...availableModules];
+    });
+  }, [availableModules]);
+
+  const toggle = (moduleId) => {
+    setSelectedModules((prev) =>
+      prev.includes(moduleId)
+        ? prev.filter((m) => m !== moduleId)
+        : [...prev, moduleId]
+    );
+  };
+
+  const allSelected =
+    availableModules.length > 0 && selectedModules.length === availableModules.length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
@@ -206,9 +249,8 @@ function ScanPage({ onLaunch }) {
             className="btn btn-solid"
             style={{ flexShrink: 0 }}
             onClick={() => {
-              const enabled = Object.entries(modules).filter(([, v]) => v).map(([k]) => k);
-              if (!url || !enabled.length) return;
-              onLaunch({ url, modules: enabled, depth, threads: Number(threads) });
+              if (!url || !selectedModules.length) return;
+              onLaunch({ url, modules: selectedModules, depth, threads: Number(threads) });
             }}
           >
             Launch ▶
@@ -217,15 +259,45 @@ function ScanPage({ onLaunch }) {
       </div></div>
 
       <div className="card">
-        <div className="card-header"><div className="card-title">Scan Modules</div></div>
+        <div className="card-header">
+          <div className="card-title">Scan Modules ({selectedModules.length}/{availableModules.length})</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn btn-ghost"
+              style={{ padding: "5px 10px", fontSize: 10 }}
+              onClick={() => setSelectedModules([...availableModules])}
+            >
+              Select All
+            </button>
+            <button
+              className="btn btn-ghost"
+              style={{ padding: "5px 10px", fontSize: 10 }}
+              onClick={() => setSelectedModules([])}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
         <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {mods.map(({ k, icon, label, desc }) => (
-            <div key={k} className={`module-card ${modules[k] ? "on" : ""}`} onClick={() => toggle(k)}>
-              <div style={{ width: 38, height: 38, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>{icon}</div>
-              <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div><div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>{desc}</div></div>
-              <Toggle on={modules[k]} onChange={() => toggle(k)} />
+          {availableModules.map((moduleId) => (
+            <div
+              key={moduleId}
+              className={`module-card ${selectedModules.includes(moduleId) ? "on" : ""}`}
+              onClick={() => toggle(moduleId)}
+            >
+              <div style={{ width: 38, height: 38, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>🛡️</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{formatModuleName(moduleId)}</div>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>{moduleHint(moduleId)}</div>
+              </div>
+              <Toggle on={selectedModules.includes(moduleId)} onChange={() => toggle(moduleId)} />
             </div>
           ))}
+          {!availableModules.length && (
+            <div style={{ color: "#475569", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
+              No modules loaded from API.
+            </div>
+          )}
         </div>
       </div>
 
@@ -373,14 +445,20 @@ export default function AgentHunter() {
   const [findings, setFindings] = useState([]);
   const [scanTarget, setScanTarget] = useState("");
   const [scanId, setScanId] = useState(null);
+  const [availableModules, setAvailableModules] = useState([]);
   const [settings, setSettings] = useState({ timeout: 30, userAgent: "AgentHunter/2.1", rateLimit: 10, proxy: "", outputDir: "./results", autoReport: true, verifySsl: true, followRedirects: true, saveLogs: true });
   const sseRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([listScans().catch(() => []), getSettings().catch(() => settings)]).then(([scans, cfg]) => {
+    Promise.all([
+      listScans().catch(() => []),
+      getSettings().catch(() => settings),
+      listModules().catch(() => []),
+    ]).then(([scans, cfg, modules]) => {
       if (!mounted) return;
       setSettings((prev) => ({ ...prev, ...cfg }));
+      setAvailableModules(Array.isArray(modules) ? modules : []);
       if (Array.isArray(scans) && scans.length) {
         const latest = scans[scans.length - 1];
         setScanTarget(latest.target || "");
@@ -512,7 +590,7 @@ export default function AgentHunter() {
 
         <main className="main">
           {page === "dashboard" && <Dashboard onNavigate={setPage} scanning={running} findings={findings} scanTarget={scanTarget} />}
-          {page === "scan" && <ScanPage onLaunch={launch} />}
+          {page === "scan" && <ScanPage onLaunch={launch} availableModules={availableModules} />}
           {page === "live" && <LivePage running={running} progress={progress} logs={logs} />}
           {page === "findings" && <FindingsPage findings={findings} />}
           {page === "settings" && <SettingsPage config={settings} onSave={saveAllSettings} />}

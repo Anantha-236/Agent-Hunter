@@ -42,6 +42,11 @@ export function listScans() {
   return request("/scans");
 }
 
+/** List available scanner module IDs. */
+export function listModules() {
+  return request("/modules");
+}
+
 /** Get agent settings. */
 export function getSettings() {
   return request("/settings");
