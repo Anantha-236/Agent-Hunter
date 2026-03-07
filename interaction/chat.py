@@ -33,6 +33,54 @@ from interaction.web_research import WebResearchTool
 
 logger = logging.getLogger(__name__)
 
+# ── Scan intent detection ─────────────────────────────────────
+# Any message containing a URL + one of these words → trigger scanner
+_SCAN_TRIGGERS = (
+    "scan", "pentest", "test", "audit", "check", "analyse", "analyze",
+    "vuln", "vulnerability", "hack", "exploit", "recon", "assess",
+    "sqli", "xss", "ssrf", "injection", "report", "find bugs",
+)
+_URL_RE = re.compile(
+    r"https?://[^\s\"'<>]+|www\.[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+# Natural-language module references → canonical module names (None = all modules)
+_MODULE_ALIASES: Dict[str, str] = {
+    "sql": "sql_injection",
+    "sqli": "sql_injection",
+    "sql injection": "sql_injection",
+    "xss": "xss_scanner",
+    "cross site scripting": "xss_scanner",
+    "cross-site scripting": "xss_scanner",
+    "ssrf": "ssrf",
+    "server side request forgery": "ssrf",
+    "ssti": "ssti",
+    "template injection": "ssti",
+    "auth": "auth_scanner",
+    "authentication": "auth_scanner",
+    "idor": "idor_scanner",
+    "broken access": "idor_scanner",
+    "path traversal": "path_traversal",
+    "lfi": "path_traversal",
+    "misconfig": "misconfig_scanner",
+    "misconfiguration": "misconfig_scanner",
+    "open redirect": "open_redirect",
+    "csrf": "csrf_scanner",
+    "command injection": "command_injection",
+    "rce": "command_injection",
+    "xxe": "xxe_scanner",
+    "graphql": "graphql_scanner",
+    "subdomain": "subdomain_takeover",
+    "takeover": "subdomain_takeover",
+    "host header": "host_header",
+    "race condition": "race_condition",
+    "race": "race_condition",
+    "api fuzzing": "idor_scanner",
+    "automated": None,  # None → all modules
+    "full scan": None,
+    "all modules": None,
+}
+
 # ══════════════════════════════════════════════════════════════
 #  HUNTER'S IDENTITY — THE SYSTEM PROMPT
 # ══════════════════════════════════════════════════════════════
@@ -88,11 +136,11 @@ class ChatSession:
 
         Flow:
           1. Check for slash commands
-          2. Detect knowledge domains
-          3. Check mistake memory for related errors
-          4. Retrieve relevant learnings
+          2. Detect scan intent (URL + trigger word) → run scanner directly
+          3. Detect knowledge domains
+          4. Check mistake memory for related errors
           5. Build enhanced prompt with probabilistic framework
-          6. Get AI response (Ollama → rule engine fallback)
+          6. Get AI response (Ollama multi-turn → rule engine fallback)
           7. Store in history
         """
         if not user_message:
@@ -101,6 +149,17 @@ class ChatSession:
         # Handle slash commands
         if user_message.startswith("/"):
             return await self._handle_command(user_message)
+
+        # Detect scan intent: URL + trigger word → run the scanner directly
+        scan_intent = self._extract_scan_intent(user_message)
+        if scan_intent:
+            self.history.append({"role": "user", "content": user_message})
+            response = await self._run_scan(
+                url=scan_intent["url"],
+                modules=scan_intent["modules"],
+            )
+            self.history.append({"role": "assistant", "content": response})
+            return response
 
         personal_updates = self._maybe_record_personal_learning(user_message)
 
@@ -124,6 +183,161 @@ class ChatSession:
         self.history.append({"role": "assistant", "content": response})
 
         return response
+
+    # ── Scan intent ───────────────────────────────────────────
+
+    def _extract_scan_intent(self, message: str) -> Optional[Dict[str, Any]]:
+        """
+        Detect if the user wants to run a scan from natural language.
+
+        Returns {"url": str, "modules": list[str] | None} when a scan is
+        intended, or None when it's a regular conversation.
+        None for modules means "use all modules".
+        """
+        lower = message.lower()
+
+        # Must contain a URL
+        url_match = _URL_RE.search(message)
+        if not url_match:
+            return None
+
+        # Must contain at least one scan-trigger word
+        if not any(trigger in lower for trigger in _SCAN_TRIGGERS):
+            return None
+
+        url = url_match.group(0).rstrip(".,;)")
+        if not url.startswith("http"):
+            url = "https://" + url
+
+        # Extract explicitly named modules from the message
+        requested: List[str] = []
+        use_all = False
+        for alias, canonical in _MODULE_ALIASES.items():
+            if alias in lower:
+                if canonical is None:
+                    use_all = True
+                    break
+                if canonical not in requested:
+                    requested.append(canonical)
+
+        modules = None if (use_all or not requested) else requested
+        return {"url": url, "modules": modules}
+
+    async def _run_scan(self, url: str, modules: Optional[List[str]]) -> str:
+        """
+        Instantiate the Orchestrator, run a full scan, and return a
+        human-readable report summary.
+        """
+        from core.models import Target, Scope
+        from core.orchestrator import Orchestrator, SCANNER_REGISTRY
+
+        # Default to a focused set if not specified
+        DEFAULT_MODULES = [
+            "sql_injection", "xss_scanner", "ssrf", "ssti",
+            "auth_scanner", "idor_scanner", "path_traversal",
+            "misconfig_scanner", "open_redirect", "csrf_scanner",
+        ]
+        run_modules = modules or DEFAULT_MODULES
+
+        # Validate all requested modules exist
+        run_modules = [m for m in run_modules if m in SCANNER_REGISTRY]
+        if not run_modules:
+            run_modules = DEFAULT_MODULES
+
+        # Build target
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        scope = Scope(allowed_domains=[parsed.hostname or ""])
+        target = Target(url=url, scope=scope)
+
+        mod_list = ", ".join(run_modules)
+        ack = (
+            f"Starting scan on {url}\n"
+            f"Modules: {mod_list}\n"
+            f"Running recon → strategy → scan → validate...\n"
+        )
+        logger.info(ack.strip())
+
+        try:
+            orchestrator = Orchestrator(
+                target=target,
+                modules=run_modules,
+                use_tui=False,        # no TUI in chat mode
+                use_ai=True,
+                auto_confirm=True,    # non-interactive
+            )
+            async with orchestrator:
+                state = await orchestrator.run()
+
+        except Exception as exc:
+            logger.error(f"Chat-initiated scan failed: {exc}", exc_info=True)
+            return (
+                f"Scan of {url} encountered an error: {exc}\n\n"
+                f"You can also run it directly:\n"
+                f"  python main.py --target {url} --modules {' '.join(run_modules)}"
+            )
+
+        # Build the report summary
+        return self._format_scan_result(state, url, run_modules)
+
+    def _format_scan_result(self, state: Any, url: str, modules: List[str]) -> str:
+        """Format scan results as a readable report for chat output."""
+        stats = state.stats()
+        findings = [f for f in state.findings if f.confirmed]
+        all_findings = state.findings
+
+        by_severity: Dict[str, List] = {"critical": [], "high": [], "medium": [], "low": [], "info": []}
+        for f in findings:
+            sev = (f.severity or "info").lower()
+            by_severity.setdefault(sev, []).append(f)
+
+        lines = [
+            f"## Scan Report — {url}",
+            f"Date: {state.ended_at.strftime('%Y-%m-%d %H:%M UTC') if state.ended_at else 'N/A'}",
+            f"Modules run: {len(state.modules_run)}/{len(modules)} ({', '.join(state.modules_run[:6])}{'...' if len(state.modules_run) > 6 else ''})",
+            f"Total findings: {stats.get('total_findings', len(all_findings))} | Confirmed: {stats.get('confirmed', len(findings))}",
+            "",
+        ]
+
+        if state.errors:
+            lines.append(f"Errors/timeouts: {len(state.errors)}")
+
+        if not findings:
+            lines.append("No confirmed vulnerabilities found in this scan.")
+            if all_findings:
+                lines.append(f"({len(all_findings)} unconfirmed signals — review manually)")
+        else:
+            for sev in ("critical", "high", "medium", "low"):
+                bucket = by_severity.get(sev, [])
+                if not bucket:
+                    continue
+                lines.append(f"### {sev.upper()} ({len(bucket)})")
+                for f in bucket[:5]:
+                    lines.append(f"  [{f.vuln_type}] {f.title}")
+                    lines.append(f"    URL: {f.url}")
+                    if f.parameter:
+                        lines.append(f"    Param: {f.parameter}")
+                    if f.payload:
+                        lines.append(f"    Payload: {f.payload[:80]}")
+                    if f.remediation:
+                        lines.append(f"    Fix: {f.remediation[:120]}")
+                    lines.append("")
+                if len(bucket) > 5:
+                    lines.append(f"  ... and {len(bucket) - 5} more {sev} findings")
+                    lines.append("")
+
+        # Update scan context so follow-up questions are context-aware
+        self.set_scan_context({
+            "target": url,
+            "modules": modules,
+            "findings_count": len(findings),
+            "technologies": getattr(state.target, "technologies", []),
+        })
+
+        lines.append("")
+        lines.append(f"Ask me to explain any finding, generate a PoC, or model the threat surface.")
+        return "\n".join(lines)
+
 
     async def _get_response(
         self,
@@ -493,6 +707,8 @@ class ChatSession:
             return await self._cmd_think(cmd[1:] if len(cmd) > 1 else [])
         if name in {"/threat", "/threatmodel"}:
             return await self._cmd_threat(cmd[1:] if len(cmd) > 1 else [])
+        if name in {"/scan", "/pentest"}:
+            return await self._cmd_scan(cmd[1:] if len(cmd) > 1 else [])
 
         commands = {
             "/help": self._cmd_help,
@@ -534,6 +750,9 @@ class ChatSession:
   /reason      - Alias for /think
   /threat      - Generate a STRIDE threat model for a target/system
   /threatmodel - Alias for /threat
+  /scan <url>  - Run a security scan (e.g., /scan https://target.com)
+               Options: --modules sql,xss,ssrf  (comma-separated)
+  /pentest     - Alias for /scan
   /quit        - Exit (also: exit, quit, bye)
 
 Ask me anything across any domain:
@@ -735,6 +954,48 @@ Ask me anything across any domain:
         )
         return research + "\n\nStored in Hunter's learning memory."
 
+    async def _cmd_scan(self, args: list) -> str:
+        """
+        Handle: /scan <url> [--modules mod1,mod2,...]
+
+        Examples:
+            /scan https://example.com
+            /scan https://example.com --modules sql,xss,ssrf
+        """
+        if not args:
+            return (
+                "Usage: /scan <url> [--modules mod1,mod2]\n\n"
+                "Examples:\n"
+                "  /scan https://demo.owasp-juice.shop\n"
+                "  /scan https://target.com --modules sql,xss,ssrf,auth\n\n"
+                "Available module aliases: sql, xss, ssrf, ssti, auth, idor, "
+                "lfi, misconfig, csrf, rce, xxe, graphql, subdomain"
+            )
+
+        # Parse --modules flag
+        requested_modules: Optional[List[str]] = None
+        parts = list(args)
+        if "--modules" in parts:
+            idx = parts.index("--modules")
+            parts.pop(idx)
+            if idx < len(parts):
+                aliases = [a.strip().lower() for a in parts.pop(idx).split(",")]
+                requested_modules = []
+                for alias in aliases:
+                    canonical = _MODULE_ALIASES.get(alias)
+                    if canonical:
+                        requested_modules.append(canonical)
+                    elif alias:
+                        requested_modules.append(alias)
+
+        url_raw = " ".join(parts).strip().rstrip(".,;)")
+        if not url_raw:
+            return "Please provide a URL. Example: /scan https://target.com"
+        if not url_raw.startswith("http"):
+            url_raw = "https://" + url_raw
+
+        return await self._run_scan(url=url_raw, modules=requested_modules)
+
     def _rule_engine_response(
         self,
         prompt: str,
@@ -780,19 +1041,22 @@ Ask me anything across any domain:
         ).get("label", primary_domain)
 
         # Security domain (Hunter's specialty)
+        # Note: if a URL is present in the original message, _extract_scan_intent()
+        # in process() will have already intercepted it and launched a real scan.
+        # We only reach here for security questions WITHOUT a URL target.
         if primary_domain == "computer_science" and any(
             w in prompt_lower for w in ["scan", "target", "module", "vuln", "hack", "exploit", "security"]
         ):
             return (
                 f"[Domain: {domain_label}]\n\n"
-                "I can help with security analysis! Here's my thinking:\n\n"
-                "For scanning, use:\n"
-                "  python main.py --target <url> --modules <module1> <module2>\n\n"
-                "Available modules: sql_injection, xss_scanner, ssrf, ssti, "
-                "auth_scanner, idor_scanner, path_traversal, misconfig_scanner, "
-                "open_redirect, csrf_scanner, and more.\n\n"
-                "P(success) ≈ 85% with Ollama active for AI-powered strategy.\n"
-                "Note: Start Ollama (`ollama serve`) for my full reasoning capabilities."
+                "Ready to scan. Share a target URL and I will launch the scanner immediately.\n\n"
+                "Examples:\n"
+                '  "Scan https://demo.owasp-juice.shop for SQLi and XSS"\n'
+                '  "Run a full pentest on https://target.com"\n'
+                '  /scan https://target.com --modules sql,xss,ssrf,auth\n\n'
+                "Available module aliases: sql, xss, ssrf, ssti, auth, idor, lfi, "
+                "misconfig, csrf, rce, xxe, graphql, subdomain\n\n"
+                "Note: Start Ollama (`ollama serve`) for AI-powered scan strategy."
             )
 
         # Math / Science
