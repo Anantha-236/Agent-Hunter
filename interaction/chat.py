@@ -37,13 +37,8 @@ logger = logging.getLogger(__name__)
 #  HUNTER'S IDENTITY — THE SYSTEM PROMPT
 # ══════════════════════════════════════════════════════════════
 
-CHAT_SYSTEM_PROMPT = SYSTEM_PROMPT + """
-
-## Conversation Mode
-- Ask a direct clarifying question whenever the user's intent is underspecified.
-- Keep short answers compact and deep answers structured.
-- If the user teaches you something, acknowledge it explicitly and incorporate it into future reasoning.
-"""
+# Single source of truth — all conversation-mode directives live in SYSTEM_PROMPT.
+CHAT_SYSTEM_PROMPT = SYSTEM_PROMPT
 
 PERSONAL_CHAT_APPENDIX = """
 
