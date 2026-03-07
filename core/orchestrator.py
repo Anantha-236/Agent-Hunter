@@ -218,6 +218,8 @@ class Orchestrator:
         self,
         resume_from: str = None,
         thought_callback=None,
+        phase_callback=None,
+        finding_callback=None,
         runtime_settings: Optional[Dict[str, Any]] = None,
     ) -> ScanState:
         import time as _time
@@ -227,7 +229,12 @@ class Orchestrator:
             self.proxy = self.http_settings.get("proxy", self.proxy) or None
             self.verify_ssl = self.http_settings.get("verify_ssl", self.verify_ssl)
 
-        state = ScanState(target=self.target, thought_callback=thought_callback)
+        state = ScanState(
+            target=self.target,
+            thought_callback=thought_callback,
+            phase_callback=phase_callback,
+            finding_callback=finding_callback,
+        )
         state.log_thought("Scan started")
 
         # Start RL episode (Feature 9: Episode lifecycle)
@@ -251,21 +258,21 @@ class Orchestrator:
             if state.phase in ("init",):
                 gate_passed = await self._phase_pre_engagement(state)
                 if not gate_passed:
-                    state.phase = "aborted"
+                    state.set_phase("aborted")
                     state.log_thought("Scan ABORTED by pre-engagement gate")
                     self._save_checkpoint(state, resume_phase="init")
                     return self._finalize_run(state)
 
             # Phase 1: Recon
             if state.phase in ("init", "recon"):
-                state.phase = "recon"
+                state.set_phase("recon")
                 self._update_tui("recon")
                 await self._phase_recon(state)
                 self._save_checkpoint(state)
 
             # Phase 2: AI Strategy
             if state.phase in ("recon", "strategy"):
-                state.phase = "strategy"
+                state.set_phase("strategy")
                 self._update_tui("strategy")
                 if self.use_ai:
                     await self._phase_strategy(state)
@@ -275,25 +282,25 @@ class Orchestrator:
 
             # Phase 3: Scanning
             if state.phase in ("strategy", "scan"):
-                state.phase = "scan"
+                state.set_phase("scan")
                 self._update_tui("scan")
                 await self._phase_scan(state)
                 self._save_checkpoint(state)
 
             # Phase 4: Validation
             if state.findings and state.phase in ("scan", "validate"):
-                state.phase = "validate"
+                state.set_phase("validate")
                 self._update_tui("validate")
                 await self._phase_validate(state)
                 self._save_checkpoint(state)
 
-            state.phase = "complete"
+            state.set_phase("complete")
 
         except Exception as exc:
             logger.error(f"Scan error: {exc}", exc_info=True)
             state.errors.append(str(exc))
             resume_phase = state.phase
-            state.phase = "failed"
+            state.set_phase("failed")
             self._save_checkpoint(state, resume_phase=resume_phase)
         return self._finalize_run(state)
 
@@ -631,6 +638,13 @@ class Orchestrator:
                 name = available_modules[0]
             cls = scanner_map[name]
             scanner = cls(self._client)
+            # Wire WAF-aware bypass into the scanner
+            waf_name = self.target.metadata.get("waf", "")
+            if waf_name:
+                scanner.waf_engine = self.waf
+                scanner.payload_engine = self.payload_engine
+                scanner._waf_name = waf_name
+            scanner._tech_stack = ",".join(self.target.technologies[:3])
             self._tui_thought(f"RL selected: {name} (strategy={self.rl.exploration_strategy_name})")
             state.modules_pending.remove(name)
 

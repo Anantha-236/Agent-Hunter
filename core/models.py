@@ -176,12 +176,30 @@ class ScanState:
     started_at: datetime = field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
     thought_callback: Optional[Callable[[str], None]] = None
+    phase_callback: Optional[Callable[[str], None]] = None
+    finding_callback: Optional[Callable[[Finding], None]] = None
+
+    def set_phase(self, phase: str) -> None:
+        """Update phase and notify listener (e.g. API SSE stream)."""
+        self.phase = phase
+        if self.phase_callback:
+            try:
+                self.phase_callback(phase)
+            except Exception:
+                pass
 
     def add_finding(self, finding: Finding) -> None:
-        key = (finding.url, finding.parameter, finding.vuln_type, finding.payload)
-        existing = {(f.url, f.parameter, f.vuln_type, f.payload) for f in self.findings}
+        key = (finding.url, finding.parameter, finding.vuln_type,
+               finding.payload, finding.evidence[:60])
+        existing = {(f.url, f.parameter, f.vuln_type,
+                     f.payload, f.evidence[:60]) for f in self.findings}
         if key not in existing:
             self.findings.append(finding)
+            if self.finding_callback:
+                try:
+                    self.finding_callback(finding)
+                except Exception:
+                    pass
 
     def log_thought(self, thought: str) -> None:
         ts = datetime.utcnow().strftime("%H:%M:%S")

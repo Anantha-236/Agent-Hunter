@@ -108,7 +108,7 @@ def test_chat_session_supports_web_research_command():
 def test_system_prompt_uses_upgraded_cognitive_protocol():
     assert "## Identity" in SYSTEM_PROMPT
     assert "## Reasoning Protocol" in SYSTEM_PROMPT
-    assert "## Security Intelligence Mode" in SYSTEM_PROMPT
+    assert "## Security Intelligence Protocol" in SYSTEM_PROMPT
     assert "Do not confabulate" in SYSTEM_PROMPT
 
 
@@ -141,6 +141,15 @@ class RecordingOllama:
 
     async def chat(self, prompt: str, system: str, use_chat_endpoint: bool = False):
         self.prompt = prompt
+        self.system = system
+        return self.reply
+
+    async def chat_with_history(self, history, system, max_tokens=None):
+        # Record the last user message as prompt for test assertions
+        for msg in reversed(history):
+            if msg.get("role") == "user":
+                self.prompt = msg["content"]
+                break
         self.system = system
         return self.reply
 

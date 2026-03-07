@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -34,8 +35,16 @@ app.add_middleware(
 )
 
 # ── In-memory stores (single-process; swap for Redis in prod) ──
-_scans: Dict[str, Dict[str, Any]] = {}
+MAX_SCANS = 50
+_scans: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _recons: Dict[str, Dict[str, Any]] = {}
+
+
+def _register_scan(scan_id: str, entry: Dict[str, Any]) -> None:
+    """Store a scan entry, evicting the oldest when at capacity."""
+    _scans[scan_id] = entry
+    while len(_scans) > MAX_SCANS:
+        _scans.popitem(last=False)
 
 
 def _model_to_dict(model: BaseModel) -> Dict[str, Any]:
@@ -247,6 +256,12 @@ async def _run_scan(scan_id: str, req: ScanRequest):
             "msg": thought,
         })
 
+    def _on_phase(phase: str) -> None:
+        entry["phase"] = phase
+
+    def _on_finding(finding) -> None:
+        entry["findings"].append(_finding_to_dict(finding))
+
     try:
         async with Orchestrator(
             target=target,
@@ -262,6 +277,8 @@ async def _run_scan(scan_id: str, req: ScanRequest):
         ) as orch:
             state = await orch.run(
                 thought_callback=_on_thought,
+                phase_callback=_on_phase,
+                finding_callback=_on_finding,
                 runtime_settings=runtime_settings,
             )
 
@@ -290,7 +307,7 @@ async def _run_scan(scan_id: str, req: ScanRequest):
 async def start_scan(req: ScanRequest):
     """Launch a new scan. Returns immediately with a scan_id."""
     scan_id = str(uuid.uuid4())
-    _scans[scan_id] = {
+    entry = {
         "scan_id": scan_id,
         "status": "starting",
         "target": req.url,
@@ -302,6 +319,7 @@ async def start_scan(req: ScanRequest):
         "phase": "init",
         "stats": {},
     }
+    _register_scan(scan_id, entry)
     asyncio.create_task(_run_scan(scan_id, req))
     return ScanSummary(
         scan_id=scan_id,
