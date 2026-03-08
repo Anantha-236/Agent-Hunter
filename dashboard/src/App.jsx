@@ -749,7 +749,14 @@ export default function AgentHunter() {
 
     const es = streamScan(started.scan_id);
     sseRef.current = es;
+    let pollTimer = null;
     const ts = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const stopPolling = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
     const handleScanError = (payload) => {
       const data = typeof payload === "string"
         ? parseEventData(payload, { errors: [payload] })
@@ -760,7 +767,31 @@ export default function AgentHunter() {
         ...errors.filter(Boolean).map((msg) => ({ t: ts(), c: "#f87171", m: msg })),
       ]);
       setRunning(false);
+      stopPolling();
     };
+
+    // Fallback sync loop: keeps UI updated even if SSE events are missed.
+    pollTimer = setInterval(async () => {
+      try {
+        const snapshot = await getScan(started.scan_id);
+        if (Array.isArray(snapshot.findings)) {
+          setFindings(snapshot.findings.map(normalizeFinding));
+        }
+        if (snapshot.phase) {
+          setProgress(PHASE_PROGRESS[snapshot.phase] ?? 0);
+        }
+        if (["complete", "error", "aborted"].includes(snapshot.status)) {
+          if (snapshot.status === "complete") {
+            setProgress(100);
+          }
+          setRunning(false);
+          stopPolling();
+          es.close();
+        }
+      } catch {
+        // Best effort sync only.
+      }
+    }, 3000);
 
     es.addEventListener("log", (ev) => {
       const d = JSON.parse(ev.data);
@@ -802,6 +833,7 @@ export default function AgentHunter() {
         setProgress(100);
       }
       setRunning(false);
+      stopPolling();
       es.close();
     });
 

@@ -275,7 +275,12 @@ class Orchestrator:
                 state.set_phase("strategy")
                 self._update_tui("strategy")
                 if self.use_ai:
-                    await self._phase_strategy(state)
+                    try:
+                        # Guard against external AI stalls so UI can always get final results.
+                        await asyncio.wait_for(self._phase_strategy(state), timeout=45)
+                    except asyncio.TimeoutError:
+                        state.log_thought("Strategy timeout after 45s — falling back to default module order")
+                        state.modules_pending = list(self.modules)
                 else:
                     state.modules_pending = list(self.modules)
                 self._save_checkpoint(state)
