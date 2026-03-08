@@ -170,7 +170,12 @@ class ChatSession:
 
         personal_updates = self._maybe_record_personal_learning(user_message)
 
-        prompt = self._build_model_prompt(user_message, personal_updates)
+        # Auto-ground factual queries with real web research before LLM
+        grounding_data = await self._maybe_ground_with_research(user_message)
+
+        prompt = self._build_model_prompt(
+            user_message, personal_updates, grounding_data=grounding_data,
+        )
 
         # Add to history
         self.history.append({"role": "user", "content": user_message})
@@ -379,6 +384,56 @@ class ChatSession:
 
         return "\n\n---\n\n".join(results)
 
+    # ── Factual query grounding (prevent LLM hallucination) ───
+
+    # Patterns that signal the user wants factual / real-world data
+    _FACTUAL_TRIGGERS = re.compile(
+        r"(what is|who is|tell me about|details of|info on|information about|"
+        r"lookup|look up|whois|nslookup|dig |traceroute|ping |"
+        r"where is|is .+ located|owner of|belongs to|"
+        r"how many|when did|when was|what happened)"
+        , re.IGNORECASE
+    )
+
+    # Domain-like patterns (not full URLs — those get caught by scan intent)
+    _DOMAIN_RE = re.compile(
+        r"\b([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
+        r"\.(?:com|org|net|io|co|dev|app|gov|edu|info|xyz|me|ai|tech|cloud|"
+        r"in|uk|de|fr|jp|au|ca|ru|cn|br|kr|nl|se|no|fi|dk|ch|at|be|"
+        r"com\.\w{2}|co\.\w{2}|org\.\w{2}))\b"
+        , re.IGNORECASE
+    )
+
+    async def _maybe_ground_with_research(self, message: str) -> Optional[str]:
+        """
+        Detect if the user is asking a factual question that needs real-world
+        data. If so, run a web research query to ground the LLM response
+        in real data instead of letting it hallucinate.
+
+        Returns the research text if found, or None.
+        """
+        lower = message.lower()
+
+        # Check if this looks like a factual query
+        is_factual = bool(self._FACTUAL_TRIGGERS.search(message))
+
+        # Check for domain names in the message
+        domain_match = self._DOMAIN_RE.search(message)
+
+        if not is_factual and not domain_match:
+            return None
+
+        # Build a research query from the user's message
+        try:
+            research = await self.research_tool.research(message)
+            # Only return if we got actual results (not the "no results" message)
+            if research and "No live web result found" not in research:
+                return research
+        except Exception:
+            pass
+
+        return None
+
 
     async def _get_response(
         self,
@@ -458,6 +513,13 @@ class ChatSession:
             "- Treat the PRIMARY USER MESSAGE as the highest-priority signal.\n"
             "- Use supporting context only to improve understanding, not to override the user's actual words.\n"
             "- If context and the message conflict, trust the user's actual message and ask a clarifying question.\n"
+            "\n## Anti-Hallucination Enforcement\n"
+            "- If the user asks about a specific IP, domain, URL, person, company, or any real-world entity:\n"
+            "  → ONLY use data from [REAL-TIME LOOKUP] sections in the prompt context.\n"
+            "  → If no lookup data is present, say: 'I don't have verified data for that.'\n"
+            "  → NEVER generate fake IPs, locations, ISPs, org names, or technical details.\n"
+            "- If you are about to state something as fact, ask yourself: 'Did I get this from a real source?'\n"
+            "  → If the answer is no, DO NOT state it.\n"
         )
         return prompt
 
@@ -465,6 +527,7 @@ class ChatSession:
         self,
         user_message: str,
         personal_updates: List[str],
+        grounding_data: Optional[str] = None,
     ) -> str:
         profile = self._analyze_message(user_message)
         parts = [
@@ -514,6 +577,28 @@ class ChatSession:
                 "",
                 "[EXTENDED REASONING CONTEXT]",
                 self.mind.enhance_prompt(user_message, self.history),
+            ])
+
+        # Inject real-time research data so LLM uses facts, not hallucination
+        if grounding_data:
+            parts.extend([
+                "",
+                "[REAL-TIME LOOKUP — USE THIS DATA, DO NOT FABRICATE]",
+                "The following is real-time verified data from web research.",
+                "Base your answer on THIS data. Do NOT make up additional details.",
+                "",
+                grounding_data,
+            ])
+        else:
+            # Remind the LLM it has no real-time data
+            parts.extend([
+                "",
+                "[NO REAL-TIME DATA AVAILABLE]",
+                "No live research data was retrieved for this query.",
+                "If the user is asking for factual information about a specific entity",
+                "(IP, domain, company, person, etc.), state that you don't have verified",
+                "data and suggest using /search <query> to get real-time results.",
+                "DO NOT guess or fabricate any factual details.",
             ])
 
         return "\n".join(parts)
@@ -1045,6 +1130,28 @@ Ask me anything across any domain:
         """Generate Hunter's response when Ollama is unavailable."""
         personal_updates = personal_updates or []
         prompt_lower = prompt.lower()
+
+        # ── ANTI-HALLUCINATION: Detect factual queries and refuse to guess ──
+        # If the user is asking about a specific real-world entity and we have
+        # no verified data, say "I don't know" instead of generating filler.
+        from interaction.web_research import WebResearchTool
+        has_ip = bool(WebResearchTool.extract_ips(prompt))
+        has_factual_trigger = bool(self._FACTUAL_TRIGGERS.search(prompt))
+        if has_ip or (has_factual_trigger and any(
+            indicator in prompt_lower for indicator in (
+                "ip ", "domain", "whois", "nslookup", "server",
+                "company", "organization", "owner of",
+            )
+        )):
+            return (
+                "I don't have verified data for that.\n\n"
+                "I refuse to guess or fabricate information — that would be irresponsible.\n\n"
+                "To get real data, use:\n"
+                "  /search <query>  — Live web research\n"
+                "  Or ask me to scan a target URL for security analysis.\n\n"
+                "If Ollama is running, I can reason about concepts, but I will never "
+                "invent facts about specific IPs, domains, or entities."
+            )
 
         if self.personal_chat and personal_updates:
             learned = "\n".join(f"- {item}" for item in personal_updates)
