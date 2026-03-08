@@ -2,7 +2,7 @@
 from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -202,7 +202,7 @@ class ScanState:
                     pass
 
     def log_thought(self, thought: str) -> None:
-        ts = datetime.utcnow().strftime("%H:%M:%S")
+        ts = datetime.now(UTC).strftime("%H:%M:%S")
         self.agent_thoughts.append(f"[{ts}] {thought}")
         if self.thought_callback:
             try:

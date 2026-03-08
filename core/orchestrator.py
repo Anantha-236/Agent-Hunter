@@ -9,7 +9,7 @@ import importlib
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Type
 
 from config.settings import ENABLED_MODULES, HUNTER_POLICY_BACKEND, SCAN_TIMEOUT_PER_MODULE, RL_REWARD_MAP
@@ -914,7 +914,7 @@ class Orchestrator:
 
     def _finalize_run(self, state: ScanState) -> ScanState:
         if state.ended_at is None:
-            state.ended_at = datetime.utcnow()
+            state.ended_at = datetime.now(UTC)
 
         self._update_tui(state.phase)
 
@@ -966,7 +966,7 @@ class Orchestrator:
                 "errors": state.errors,
                 "thoughts": state.agent_thoughts,
                 "reward": self.reward.to_dict(),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
             with open(CHECKPOINT_FILE, "w") as f:
                 json.dump(data, f, indent=2)

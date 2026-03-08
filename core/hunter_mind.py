@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -398,7 +398,7 @@ class MistakeMemory:
             """, (
                 h, domain, topic, what_went_wrong, root_cause,
                 correct_approach, context, severity,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ))
             self._conn.commit()
             logger.info(f"Mistake recorded: [{domain}/{topic}] {what_went_wrong[:60]}")
@@ -408,7 +408,7 @@ class MistakeMemory:
             self._conn.execute(
                 "UPDATE mistakes SET times_avoided = times_avoided + 1, "
                 "last_checked = ? WHERE mistake_hash = ?",
-                (datetime.utcnow().isoformat(), h),
+                (datetime.now(UTC).isoformat(), h),
             )
             self._conn.commit()
             return -1
@@ -456,7 +456,7 @@ class MistakeMemory:
             self._conn.execute(
                 "UPDATE mistakes SET last_checked = ?, times_avoided = times_avoided + 1 "
                 "WHERE id = ?",
-                (datetime.utcnow().isoformat(), m["id"]),
+                (datetime.now(UTC).isoformat(), m["id"]),
             )
         if results:
             self._conn.commit()
@@ -489,7 +489,7 @@ class MistakeMemory:
             INSERT INTO learnings (domain, topic, insight, source, confidence, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (domain, topic, insight, source, confidence,
-              datetime.utcnow().isoformat()))
+              datetime.now(UTC).isoformat()))
         self._conn.commit()
         return self._conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -542,7 +542,7 @@ class MistakeMemory:
         """, (
             title, description, json.dumps(domains or []),
             inspiration, feasibility, impact,
-            datetime.utcnow().isoformat(),
+            datetime.now(UTC).isoformat(),
         ))
         self._conn.commit()
         return self._conn.execute("SELECT last_insert_rowid()").fetchone()[0]
