@@ -161,6 +161,13 @@ class ChatSession:
             self.history.append({"role": "assistant", "content": response})
             return response
 
+        # Detect IP address queries → do real lookup instead of LLM hallucination
+        ip_response = await self._maybe_ip_lookup(user_message)
+        if ip_response:
+            self.history.append({"role": "user", "content": user_message})
+            self.history.append({"role": "assistant", "content": ip_response})
+            return ip_response
+
         personal_updates = self._maybe_record_personal_learning(user_message)
 
         prompt = self._build_model_prompt(user_message, personal_updates)
@@ -337,6 +344,40 @@ class ChatSession:
         lines.append("")
         lines.append(f"Ask me to explain any finding, generate a PoC, or model the threat surface.")
         return "\n".join(lines)
+
+    # ── IP address lookup (real data, no hallucination) ───────
+
+    # Trigger words that indicate the user is asking ABOUT an IP
+    _IP_QUERY_TRIGGERS = (
+        "ip", "address", "lookup", "whois", "details", "info",
+        "information", "geolocation", "location", "owner", "trace",
+        "who", "what", "where", "find", "check", "tell",
+    )
+
+    async def _maybe_ip_lookup(self, message: str) -> Optional[str]:
+        """
+        If the message contains an IP address and looks like an IP query,
+        perform a real lookup via WebResearchTool instead of sending it
+        to the LLM (which would hallucinate).
+        """
+        from interaction.web_research import WebResearchTool
+
+        ips = WebResearchTool.extract_ips(message)
+        if not ips:
+            return None
+
+        lower = message.lower()
+        # Only intercept if the message looks like it's asking about the IP
+        if not any(trigger in lower for trigger in self._IP_QUERY_TRIGGERS):
+            return None
+
+        # Look up each IP found in the message
+        results: List[str] = []
+        for ip_str in dict.fromkeys(ips):  # deduplicate, preserve order
+            result = await self.research_tool.ip_lookup(ip_str)
+            results.append(result)
+
+        return "\n\n---\n\n".join(results)
 
 
     async def _get_response(

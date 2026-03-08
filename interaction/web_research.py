@@ -1,11 +1,18 @@
 """Live web research helpers for Hunter chat and external bots."""
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
+
+# Pattern to detect IP addresses (v4) in user messages
+_IP_RE = re.compile(
+    r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"
+)
 
 
 class WebResearchTool:
@@ -124,3 +131,108 @@ class WebResearchTool:
             }
         except Exception:
             return None
+
+    # ── IP address lookup ─────────────────────────────────────
+
+    @staticmethod
+    def extract_ips(text: str) -> List[str]:
+        """Return all IPv4-like strings found in *text*."""
+        return _IP_RE.findall(text)
+
+    @staticmethod
+    def validate_ip(ip_str: str) -> bool:
+        """Return True if *ip_str* is a syntactically valid IPv4 address."""
+        try:
+            ipaddress.IPv4Address(ip_str)
+            return True
+        except ValueError:
+            return False
+
+    async def ip_lookup(self, ip_str: str) -> str:
+        """
+        Look up real-world information for an IP address using the
+        free ip-api.com JSON endpoint.  Returns a formatted summary
+        or a clear error when the IP is invalid / unreachable.
+        """
+        # ── validate first ──────────────────────────────────
+        if not self.validate_ip(ip_str):
+            return (
+                f"**{ip_str} is not a valid IPv4 address.**\n\n"
+                "Each octet must be between 0 and 255.  "
+                "For example, `10.123.55.288` is invalid because 288 > 255.\n"
+                "Please double-check the IP and try again."
+            )
+
+        # ── classify private / reserved ────────────────────
+        addr = ipaddress.IPv4Address(ip_str)
+        if addr.is_private:
+            return (
+                f"**{ip_str}** is a **private (RFC 1918) address**.\n\n"
+                "Private IP ranges:\n"
+                "  - 10.0.0.0 – 10.255.255.255\n"
+                "  - 172.16.0.0 – 172.31.255.255\n"
+                "  - 192.168.0.0 – 192.168.255.255\n\n"
+                "Private addresses are not routable on the public Internet. "
+                "No geolocation or ownership data is available externally.\n"
+                "To get details, you would need access to the internal "
+                "network where this address is assigned."
+            )
+        if addr.is_reserved or addr.is_loopback or addr.is_link_local:
+            label = (
+                "loopback" if addr.is_loopback
+                else "link-local" if addr.is_link_local
+                else "reserved"
+            )
+            return (
+                f"**{ip_str}** is a **{label} address** and has no public "
+                "geolocation or ownership information."
+            )
+
+        # ── live lookup via ip-api.com (free, no key needed) ──
+        api_url = f"http://ip-api.com/json/{ip_str}?fields=66846719"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(
+                    api_url,
+                    headers={"User-Agent": "AgentHunter/2.1"},
+                )
+            if resp.status_code != 200:
+                return f"IP lookup API returned HTTP {resp.status_code} for {ip_str}."
+
+            data = resp.json()
+            if data.get("status") != "success":
+                return (
+                    f"IP lookup failed for {ip_str}: "
+                    f"{data.get('message', 'unknown error')}"
+                )
+
+            lines = [f"## IP Intelligence — {ip_str}", ""]
+            field_map = [
+                ("Country", "country"),
+                ("Region", "regionName"),
+                ("City", "city"),
+                ("ZIP", "zip"),
+                ("Latitude", "lat"),
+                ("Longitude", "lon"),
+                ("Timezone", "timezone"),
+                ("ISP", "isp"),
+                ("Organization", "org"),
+                ("AS", "as"),
+                ("Reverse DNS", "reverse"),
+                ("Mobile", "mobile"),
+                ("Proxy/VPN", "proxy"),
+                ("Hosting", "hosting"),
+            ]
+            for label, key in field_map:
+                val = data.get(key)
+                if val is not None and val != "":
+                    lines.append(f"  **{label}:** {val}")
+
+            lines.append("")
+            lines.append("*Source: ip-api.com (real-time lookup)*")
+            return "\n".join(lines)
+
+        except httpx.TimeoutException:
+            return f"IP lookup timed out for {ip_str}. Try again later."
+        except Exception as exc:
+            return f"IP lookup error for {ip_str}: {exc}"
