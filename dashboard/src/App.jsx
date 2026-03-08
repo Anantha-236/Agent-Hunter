@@ -103,6 +103,17 @@ function toHexColor(msg) {
 function normalizeFinding(raw, idx) {
   const sev = (raw.severity || "LOW").toUpperCase();
   const cat = (raw.module || "unknown").toLowerCase();
+  const where = [
+    raw.url ? `URL: ${raw.url}` : "",
+    raw.parameter ? `Parameter: ${raw.parameter}` : "",
+    raw.module ? `Module: ${raw.module}` : "",
+  ].filter(Boolean).join(" | ");
+  const how = [
+    raw.method ? `Method: ${raw.method}` : "",
+    raw.payload ? `Payload: ${String(raw.payload).slice(0, 160)}` : "",
+    raw.evidence ? `Evidence: ${String(raw.evidence).slice(0, 260)}` : "",
+  ].filter(Boolean).join("\n");
+
   return {
     id: raw.id || idx + 1,
     type: raw.title || raw.vuln_type || "Finding",
@@ -112,6 +123,9 @@ function normalizeFinding(raw, idx) {
     cve: raw.cwe_id || "N/A",
     ts: (raw.discovered_at || "").slice(11, 19) || "--:--:--",
     desc: raw.description || "No description",
+    where: where || "Location details not available",
+    how: how || "Technical evidence not available",
+    remediation: raw.remediation || "No remediation guidance available",
   };
 }
 
@@ -653,7 +667,19 @@ function FindingsPage({ findings }) {
         <div className="detail-panel">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><Badge s={sel.sev} /><span className="chip">{sel.cat}</span><span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginLeft: "auto" }}>{sel.ts}</span></div>
           <div className="detail-title">{sel.type}</div>
-          <div className="detail-desc">{sel.desc}</div>
+          <div className="detail-desc" style={{ marginBottom: 12 }}>{sel.desc}</div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#63ebd7", marginBottom: 4 }}>Where Found</div>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#cbd5e1", lineHeight: 1.7 }}>{sel.where}</div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#63ebd7", marginBottom: 4 }}>How Found</div>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#cbd5e1", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{sel.how}</div>
+          </div>
+          <div>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#63ebd7", marginBottom: 4 }}>Remediation</div>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#cbd5e1", lineHeight: 1.7 }}>{sel.remediation}</div>
+          </div>
         </div>
       )}
     </div>
