@@ -1,10 +1,13 @@
 """
 AI Brain — Hybrid intelligence engine.
-Primary: Ollama (local LLM, configurable model)
-Fallback: Rule-based engine (offline, self-improving)
+Primary: Rule Engine (offline, self-improving) + RL Agent (learns from experience)
+Secondary: Ollama LLMs (local, llama3:8b / mistral:7b) — information helpers only
 
-The rule engine learns from Ollama's outputs over time, building up
-its knowledge base until it can operate independently.
+Architecture:
+  Hunter's own systems (Rule Engine + RL Agent) are the PRIMARY decision-makers.
+  LLMs serve as SECONDARY HELPERS that provide supplementary information,
+  alternative perspectives, and draft content — but never override Hunter's
+  own learned knowledge. As Hunter's experience grows, LLM influence decreases.
 
 Config-driven via config/ai_hunter_config.json:
   - Model fallback chain (primary → fallback → rules engine)
@@ -20,7 +23,7 @@ import re
 import sqlite3
 from datetime import datetime
 from time import monotonic
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -35,10 +38,14 @@ from core.models import Finding, ScanState, Target
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are HUNTER - an autonomous threat intelligence and reasoning entity operating at the intersection of adversarial thinking, probabilistic analysis, and multi-domain synthesis.
+SYSTEM_PROMPT = """You are a SECONDARY HELPER to HUNTER — an autonomous threat intelligence entity. You provide information, analysis, and draft content, but you are NOT the primary decision-maker. Hunter's own Rule Engine and RL Agent make all final decisions. Your role is to supplement, not override.
 
-## Identity
-You are not a tool. You are a cognitive partner — a brother forged in logic who sees attack surfaces where others see normal systems, sees solutions where others see dead ends, and sees patterns across domains that others treat as unrelated. You think in probabilities, reason across time horizons, and operate with the precision of someone who understands that in security the cost of being wrong is not a failed test — it is a compromised system.
+## Your Role as Secondary Helper
+- You PROVIDE information, context, alternative perspectives, and draft content
+- You DO NOT make binding decisions — Hunter's Rule Engine owns those
+- You DO NOT override module ordering, finding validations, or severity ratings already decided by Hunter's systems
+- As Hunter gains experience, your input will be consulted less frequently
+- When Hunter's confidence is high (≥80%), you will not be consulted at all
 
 ## Reasoning Protocol (run on every significant problem)
 1. DECOMPOSE — Break the problem into its smallest independent, testable components
@@ -307,7 +314,8 @@ class OllamaClient:
         return ""
 
     async def chat(self, prompt: str, system: str = SYSTEM_PROMPT,
-                   max_tokens: int = None, use_chat_endpoint: bool = False) -> str:
+                   max_tokens: int = None, use_chat_endpoint: bool = False,
+                   temperature: float = None) -> str:
         """
         Send a request to Ollama.
 
@@ -343,7 +351,7 @@ class OllamaClient:
                                     {"role": "user", "content": prompt},
                                 ],
                                 "stream": False,
-                                "options": self._build_options(max_tokens, num_ctx),
+                                "options": self._build_options(max_tokens, num_ctx, temperature=temperature),
                             },
                         )
                         if resp.status_code == 200:
@@ -356,7 +364,7 @@ class OllamaClient:
                                 "prompt": prompt,
                                 "system": system,
                                 "stream": False,
-                                "options": self._build_options(max_tokens, num_ctx),
+                                "options": self._build_options(max_tokens, num_ctx, temperature=temperature),
                             },
                         )
                         if resp.status_code == 200:
@@ -388,16 +396,61 @@ class OllamaClient:
         logger.warning(f"Ollama failed after {max_retries} retries — falling back to rules")
         return ""
 
-    def _build_options(self, max_tokens: int, num_ctx: int) -> Dict[str, Any]:
+    def _build_options(self, max_tokens: int, num_ctx: int,
+                       temperature: float = None) -> Dict[str, Any]:
         """Build the options dict from config values."""
         return {
-            "temperature": OLLAMA_TEMPERATURE,
+            "temperature": temperature if temperature is not None else OLLAMA_TEMPERATURE,
             "top_p": OLLAMA_TOP_P,
             "top_k": OLLAMA_TOP_K,
             "num_ctx": num_ctx,
             "num_predict": max_tokens,
             "repeat_penalty": OLLAMA_REPEAT_PENALTY,
         }
+
+    async def chat_with_reasoning(
+        self, prompt: str, system: str = SYSTEM_PROMPT,
+        max_tokens: int = None,
+    ) -> Tuple[str, str]:
+        """Two-pass chain-of-thought reasoning.
+
+        Pass 1 (think):  Free-form step-by-step analysis at temperature 0.7.
+                         No JSON required.  Explores the problem space.
+        Pass 2 (structure): Uses Pass 1 output as context.  Returns structured
+                           JSON at temperature 0.1 for deterministic formatting.
+
+        Returns:
+            (thinking_output, structured_output)
+            Both may be empty strings if Ollama is unreachable.
+        """
+        # Pass 1: Think freely
+        thinking_system = (
+            "You are an expert security analyst. Think step by step. "
+            "Do NOT produce JSON. Reason openly about the problem.\n"
+            "Think through at least 3 approaches. "
+            "Assign P(success) to each. "
+            "Identify what could go wrong."
+        )
+        thinking_output = await self.chat(
+            prompt, system=thinking_system, max_tokens=max_tokens,
+            temperature=0.7,
+        )
+        if not thinking_output:
+            return "", ""
+
+        # Pass 2: Structure the thinking into JSON
+        structure_prompt = (
+            f"Based on your analysis below, now return structured JSON.\n\n"
+            f"YOUR ANALYSIS:\n{thinking_output}\n\n"
+            f"ORIGINAL REQUEST:\n{prompt}\n\n"
+            f"Now convert your analysis into the requested JSON format. "
+            f"Return ONLY valid JSON."
+        )
+        structured_output = await self.chat(
+            structure_prompt, system=system, max_tokens=max_tokens,
+            temperature=0.1,
+        )
+        return thinking_output, structured_output
 
 
 # ══════════════════════════════════════════════════════════════
@@ -883,8 +936,8 @@ A total of {stats['total_findings']} potential issues were identified, with {sta
     # ── Learning from Ollama ──────────────────────────────────
 
     def learn_from_ai(self, prompt_type: str, input_data: str,
-                      ai_output: str, quality_score: float = 0.0) -> None:
-        """Store AI outputs to learn from over time."""
+                      ai_output: str, quality_score: float = 0.0) -> int:
+        """Store AI outputs to learn from over time. Returns inserted row ID."""
         import hashlib
         input_hash = hashlib.md5(input_data.encode()).hexdigest()[:16]
         self._conn.execute(
@@ -892,6 +945,7 @@ A total of {stats['total_findings']} potential issues were identified, with {sta
             (prompt_type, input_hash, ai_output, quality_score, datetime.utcnow().isoformat()),
         )
         self._conn.commit()
+        return self._conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     def learn_strategy(self, tech: str, module: str, success: bool) -> None:
         """Update strategy rules from scan results."""
@@ -909,6 +963,66 @@ A total of {stats['total_findings']} potential issues were identified, with {sta
               success, success, success, datetime.utcnow().isoformat()))
         self._conn.commit()
 
+    # ── Self-Learning Read-Back ────────────────────────────────
+
+    def get_relevant_ai_outputs(self, prompt_type: str,
+                                 limit: int = 5) -> List[Dict[str, Any]]:
+        """Retrieve recent high-quality AI outputs of the same prompt type.
+
+        Closes the self-learning loop: previous AI reasoning is fed back
+        into future prompts so Hunter's LLM consultations improve over time.
+        """
+        rows = self._conn.execute(
+            "SELECT output, quality_score, created_at FROM ai_outputs "
+            "WHERE prompt_type = ? AND quality_score > 0.0 "
+            "ORDER BY quality_score DESC, created_at DESC LIMIT ?",
+            (prompt_type, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_output_quality(self, output_id: int,
+                              quality_score: float) -> None:
+        """Update the quality score of an AI output after scan results are known."""
+        self._conn.execute(
+            "UPDATE ai_outputs SET quality_score = ? WHERE rowid = ?",
+            (quality_score, output_id),
+        )
+        self._conn.commit()
+
+    def get_learned_strategy_context(self,
+                                      technologies: List[str]) -> str:
+        """Format learned strategy weights as natural language for Ollama.
+
+        Reads from the learned_strategies table and produces a context block
+        that tells the LLM which modules historically worked/failed for
+        the detected technology stack.
+        """
+        if not technologies:
+            return ""
+        placeholders = ",".join("?" * len(technologies))
+        rows = self._conn.execute(
+            f"SELECT tech_stack, module, priority, success_count, fail_count "
+            f"FROM learned_strategies "
+            f"WHERE tech_stack IN ({placeholders}) "
+            f"ORDER BY priority DESC LIMIT 20",
+            technologies,
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = ["LEARNED STRATEGY WEIGHTS (from past scans):"]
+        for r in rows:
+            total = (r["success_count"] or 0) + (r["fail_count"] or 0)
+            if total == 0:
+                continue
+            rate = (r["success_count"] or 0) / total
+            emoji = "✓" if rate >= 0.5 else "✗"
+            lines.append(
+                f"  {emoji} {r['module']} on {r['tech_stack']}: "
+                f"{rate:.0%} success ({r['success_count']}W/{r['fail_count']}L, "
+                f"priority={r['priority']})"
+            )
+        return "\n".join(lines)
+
     def close(self):
         self._conn.close()
 
@@ -919,12 +1033,21 @@ A total of {stats['total_findings']} potential issues were identified, with {sta
 
 class AIBrain:
     """
-    Hybrid AI brain.
-    Primary: Ollama llama3:8b (free, local)
-    Fallback: RuleEngine (offline, self-improving)
+    Hybrid AI brain — Hunter's own systems are PRIMARY.
 
-    Every Ollama output is fed back to the rule engine for learning.
+    Decision hierarchy:
+      1. Rule Engine (offline, self-improving) — always runs first, owns the decision
+      2. RL Agent (reinforcement learning) — refines module ordering via experience
+      3. Ollama LLMs (llama3:8b / mistral:7b) — SECONDARY HELPERS only
+
+    LLMs provide supplementary information (alternative perspectives, draft text,
+    extra context) but NEVER override the rule engine's decisions. As Hunter gains
+    experience, LLM influence is automatically reduced via a confidence-based gate.
     """
+
+    # When rule engine confidence ≥ this threshold, LLM input is skipped entirely.
+    # This means as Hunter learns, it relies less on LLMs.
+    LLM_SKIP_CONFIDENCE = 80
 
     def __init__(self):
         self.ollama = OllamaClient()
@@ -965,12 +1088,35 @@ class AIBrain:
 
     async def analyse_recon(self, target: Target, reward_context: str = "",
                             memory_context: str = "") -> Dict[str, Any]:
-        # Always get rule engine analysis
+        # PRIMARY: Rule engine analysis (always runs, owns the decision)
         rule_result = self.rules.analyse_recon(target)
+        rule_confidence = rule_result.get("confidence", 0)
 
-        # Try Ollama for enhanced analysis
+        # If rule engine is confident enough, skip LLM entirely
+        if rule_confidence >= self.LLM_SKIP_CONFIDENCE:
+            rule_result["source"] = "rules (confident — LLM skipped)"
+            logger.info(f"Rule engine confidence={rule_confidence}% ≥ {self.LLM_SKIP_CONFIDENCE}% — LLM consultation skipped")
+            return rule_result
+
+        # SECONDARY: Consult LLM with TWO-PASS reasoning for supplementary info
         if await self._check_ollama():
-            prompt = f"""Analyse this recon data for a security scan. Apply adversarial thinking. Return ONLY valid JSON.
+            # ── Build enriched prompt with self-learning context ──
+            learned_ctx = self.rules.get_learned_strategy_context(
+                target.technologies
+            )
+            past_outputs = self.rules.get_relevant_ai_outputs("strategy", limit=3)
+            past_ctx = ""
+            if past_outputs:
+                past_ctx = "\nPAST SUCCESSFUL STRATEGY ANALYSIS (learn from these):\n"
+                for po in past_outputs:
+                    past_ctx += f"  [{po['quality_score']:.1f}] {po['output'][:200]}\n"
+
+            prompt = f"""You are a SECONDARY HELPER providing supplementary analysis. The primary decision has already been made by Hunter's rule engine.
+
+Rule engine decision: {json.dumps(rule_result, default=str)}
+
+Provide ADDITIONAL insights only — do NOT override the rule engine's module ordering.
+Focus on: attack vectors the rule engine might have missed, detection gaps, and STRIDE flags.
 
 Target: {target.url}
 Technologies: {target.technologies}
@@ -979,35 +1125,38 @@ Endpoints: {target.discovered_urls[:20]}
 Parameters: {json.dumps(dict(list(target.discovered_params.items())[:10]))}
 {f"Reward context: {reward_context}" if reward_context else ""}
 {f"Past scans: {memory_context}" if memory_context else ""}
+{learned_ctx}
+{past_ctx}
 
-Adversarial analysis steps:
-1. Walk the kill chain — which tech is the highest-value initial access vector?
-2. Apply STRIDE to each discovered component
-3. Flag parameter names that suggest IDOR, SSRF, or injection surfaces
-4. Identify endpoints that likely have weaker auth or logic flaws
-5. Note any detection gaps (what blue team telemetry would miss this vector?)
+Return ONLY valid JSON: {{"additional_modules":["any modules rule engine missed"],"attack_vectors":["vector: why"],"detection_gaps":["gap1"],"stride_flags":{{}}}}"""
 
-Return: {{"reasoning":"step-by-step kill-chain analysis","priority_modules":["module_name",...],"attack_vectors":["vector: why it matters"],"confidence":0-100,"detection_gaps":["gap1"],"stride_flags":{{}}}}"""
-
-            raw = await self.ollama.chat(prompt)
+            # Two-pass reasoning: think first, then structure
+            thinking, raw = await self.ollama.chat_with_reasoning(prompt)
             if raw:
                 try:
-                    ai_result = json.loads(raw)
-                    # Merge: AI modules first, then rule engine's extras
-                    ai_mods = ai_result.get("priority_modules", [])
+                    ai_supplement = json.loads(raw)
+                    # Merge: rule engine modules FIRST (primary), then any LLM extras
                     rule_mods = rule_result.get("priority_modules", [])
-                    merged = ai_mods + [m for m in rule_mods if m not in ai_mods]
-                    ai_result["priority_modules"] = merged
-                    ai_result["source"] = "ollama+rules"
+                    ai_extras = ai_supplement.get("additional_modules", [])
+                    merged = rule_mods + [m for m in ai_extras if m not in rule_mods]
+                    rule_result["priority_modules"] = merged
 
-                    # Learn from this
-                    self.rules.learn_from_ai("strategy", target.url, raw)
-                    return ai_result
+                    # Add LLM's supplementary insights without overriding
+                    if ai_supplement.get("attack_vectors"):
+                        existing = rule_result.get("attack_vectors", [])
+                        rule_result["attack_vectors"] = existing + [
+                            f"[LLM] {v}" for v in ai_supplement["attack_vectors"][:3]
+                        ]
+                    if ai_supplement.get("detection_gaps"):
+                        rule_result["detection_gaps"] = ai_supplement["detection_gaps"][:3]
+
+                    rule_result["source"] = "rules+llm_reasoning"
+                    rule_result["_thinking"] = thinking[:500]  # store for reflection
+                    output_id = self.rules.learn_from_ai("strategy", target.url, raw)
+                    rule_result["_ai_output_id"] = output_id
+                    return rule_result
                 except (json.JSONDecodeError, ValueError):
-                    extracted = _extract_json(raw)
-                    if extracted:
-                        self.rules.learn_from_ai("strategy", target.url, raw)
-                        return extracted
+                    pass  # LLM failed — rule engine result stands
 
         rule_result["source"] = "rules"
         return rule_result
@@ -1015,39 +1164,36 @@ Return: {{"reasoning":"step-by-step kill-chain analysis","priority_modules":["mo
     # ── Validation ────────────────────────────────────────────
 
     async def validate_finding(self, finding: Finding) -> Finding:
-        # Always run rule engine first
+        # PRIMARY: Rule engine validates first (owns the decision)
         finding = self.rules.validate_finding(finding)
         rule_confirmed = finding.confirmed
+        rule_analysis = finding.ai_analysis or ""
 
-        # Enhance with Ollama if available
+        # SECONDARY: Consult LLM with TWO-PASS reasoning for supplementary context
+        # LLM CANNOT override rule engine's confirmed/false_positive decision
         if await self._check_ollama():
-            prompt = f"""Validate this security finding with adversarial precision. Return ONLY valid JSON.
+            prompt = f"""You are a SECONDARY HELPER. The rule engine has already decided this finding is {'CONFIRMED' if rule_confirmed else 'UNCONFIRMED'}.
+DO NOT override that decision. Instead, provide supplementary analysis only.
 
 Type: {finding.vuln_type}, URL: {finding.url}, Param: {finding.parameter}
 Payload: {finding.payload}
 Evidence: {finding.evidence[:500]}
-Request: {finding.request[:300]}
+Rule engine analysis: {rule_analysis}
 
-Validation checklist:
-1. Is the evidence technically consistent with this vuln type? (P=?)
-2. Could this be a false positive? (list specific FP patterns)
-3. What is the realistic exploitability? (consider auth, network position)
-4. Blast radius: what can an attacker do with this finding?
-5. What second-order vulnerabilities does this enable (privilege paths, pivots)?
-6. Specific, testable remediation with verification step
+Provide ONLY supplementary context:
+1. Blast radius: what can an attacker do with this?
+2. Second-order effects (privilege paths, pivots)
+3. Specific remediation with verification step
 
-Return: {{"is_true_positive":true/false,"confidence":0-100,"reasoning":"technical validation chain","severity":"critical|high|medium|low|info","blast_radius":"what attacker can achieve","second_order_effects":["effect1"],"remediation":"specific fix","verification":"how to confirm fix works","false_positive_risk":"why this might be wrong"}}"""
+Return ONLY valid JSON: {{"blast_radius":"what attacker can achieve","second_order_effects":["effect1"],"remediation":"specific fix","verification":"how to confirm fix works"}}"""
 
-            raw = await self.ollama.chat(prompt)
+            # Two-pass reasoning for deeper analysis
+            thinking, raw = await self.ollama.chat_with_reasoning(prompt)
             if raw:
                 try:
                     data = json.loads(raw) if raw else {}
-                    ai_confirmed = data.get("is_true_positive", rule_confirmed)
-                    finding.confirmed = ai_confirmed
-                    finding.false_positive = not ai_confirmed
-                    finding.ai_analysis = data.get("reasoning", finding.ai_analysis)
-                    if data.get("severity"):
-                        finding.severity = data["severity"]
+                    # LLM CANNOT change confirmed/false_positive — rule engine owns that
+                    # Only add supplementary remediation info
                     remediation_parts = []
                     if data.get("remediation"):
                         remediation_parts.append(data["remediation"])
@@ -1061,9 +1207,13 @@ Return: {{"is_true_positive":true/false,"confidence":0-100,"reasoning":"technica
                     if remediation_parts:
                         finding.remediation = " | ".join(remediation_parts)
 
-                    # Learn from Ollama's validation
+                    finding.ai_analysis = (
+                        f"{rule_analysis} [LLM reasoning: {thinking[:200]}] "
+                        f"[blast_radius: {data.get('blast_radius', 'n/a')}]"
+                    )
+
                     self.rules.learn_from_ai("validation", finding.vuln_type, raw,
-                                            quality_score=data.get("confidence", 50) / 100)
+                                            quality_score=0.5)
                 except (json.JSONDecodeError, ValueError):
                     pass  # Keep rule engine result
 
@@ -1100,18 +1250,24 @@ Payload: {finding.payload}, Evidence: {finding.evidence[:200]}
     # ── Report Summary ────────────────────────────────────────
 
     async def summarise_scan(self, state: ScanState, reward_summary: str = "") -> str:
-        # Rule engine summary (always works)
+        # PRIMARY: Rule engine summary (always works, always used)
         rule_summary = self.rules.summarise_scan(state)
 
-        # Try Ollama for polished summary
+        # SECONDARY: Ask LLM to polish the rule engine's output (not replace it)
         if await self._check_ollama():
             findings = [{"title": f.title, "severity": f.severity, "url": f.url}
                         for f in state.findings if f.confirmed]
-            prompt = f"""Write a professional executive summary for a security scan report.
-Target: {state.target.url}, Stats: {json.dumps(state.stats())}
+            prompt = f"""You are a SECONDARY HELPER. Polish and enhance this security report summary. Keep all facts from the original — do NOT add or invent findings.
+
+ORIGINAL REPORT (from Hunter's rule engine — this is the authoritative source):
+{rule_summary}
+
+Additional data:
+Stats: {json.dumps(state.stats())}
 Confirmed findings: {json.dumps(findings[:15])}
 {f"Agent performance: {reward_summary}" if reward_summary else ""}
-Write 3-5 paragraphs in professional security report style."""
+
+Rewrite in professional executive style (3-5 paragraphs). Keep every fact from the original. Add no new claims."""
 
             raw = await self.ollama.chat(prompt, max_tokens=1500)
             if raw and len(raw) > 100:
@@ -1124,8 +1280,9 @@ Write 3-5 paragraphs in professional security report style."""
 
     async def generate_adaptive_payloads(self, vuln_type: str,
                                           context: Dict[str, Any]) -> List[str]:
+        """Generate payloads. LLM is secondary — used only to supplement, not replace."""
         if await self._check_ollama():
-            prompt = f"""Generate 10 targeted payloads for {vuln_type} testing.
+            prompt = f"""You are a SECONDARY HELPER. Suggest additional payloads for {vuln_type} testing.
 Technologies: {context.get('technologies', [])}
 WAF detected: {context.get('waf_detected', False)}
 Failed payloads: {context.get('failed_payloads', [])[:3]}
@@ -1142,6 +1299,76 @@ Return ONLY a JSON array: ["payload1", "payload2", ...]"""
                     if arr:
                         return arr
         return []
+
+    # ── Self-Reflection (Post-Scan) ────────────────────────────
+
+    async def reflect_on_scan(
+        self, strategy: Dict[str, Any], outcomes: Dict[str, Any],
+        reward_summary: str = "",
+    ) -> Dict[str, Any]:
+        """Post-scan reflection: one Ollama call, two destinations.
+
+        Produces a single JSON payload whose fields map to:
+          - generalizable_lessons  → HunterMind.record_learning()
+          - generalizable_mistakes → HunterMind.record_mistake()
+          - target_waf_notes       → ScanMemory reflection_type=waf_bypass
+          - target_skip_modules    → ScanMemory reflection_type=module_skip
+          - target_confirmed_paths → ScanMemory reflection_type=confirmed_path
+
+        Returns the parsed dict (or empty dict on failure).
+        """
+        if not await self._check_ollama():
+            return {}
+
+        modules_used = strategy.get("priority_modules", [])
+        findings_count = outcomes.get("total_findings", 0)
+        confirmed_count = outcomes.get("confirmed_findings", 0)
+        modules_empty = outcomes.get("empty_modules", [])
+        waf_detected = outcomes.get("waf_detected", False)
+        waf_name = outcomes.get("waf_name", "")
+        target_url = outcomes.get("target_url", "")
+        technologies = outcomes.get("technologies", [])
+
+        prompt = f"""You are Hunter's self-reflection engine. Analyse this scan's results.
+
+STRATEGY USED:
+  Modules: {modules_used}
+  Technologies: {technologies}
+  WAF: {waf_name or 'none'}
+
+OUTCOMES:
+  Total findings: {findings_count}
+  Confirmed: {confirmed_count}
+  Modules with 0 findings: {modules_empty}
+  Performance: {reward_summary}
+
+REFLECT:
+1. Which strategy choices were correct? Which were wrong?
+2. What would you do differently next time?
+3. Are there generalizable lessons (apply to ANY target)?
+4. Are there target-specific notes (apply only to {target_url})?
+
+Return ONLY valid JSON:
+{{
+  "generalizable_lessons": ["lesson1", "lesson2"],
+  "generalizable_mistakes": [
+    {{"mistake": "what went wrong", "correct": "what to do instead"}}
+  ],
+  "target_waf_notes": "WAF bypass observations or empty string",
+  "target_skip_modules": ["module names to skip next time on this target"],
+  "target_confirmed_paths": ["endpoint/param combinations that worked"]
+}}"""
+
+        thinking, raw = await self.ollama.chat_with_reasoning(prompt)
+        if not raw:
+            return {}
+
+        try:
+            reflection = json.loads(raw)
+            reflection["_thinking"] = thinking[:500]
+            return reflection
+        except (json.JSONDecodeError, ValueError):
+            return {}
 
     # ── Learning Feedback ─────────────────────────────────────
 
@@ -1168,11 +1395,8 @@ Return ONLY a JSON array: ["payload1", "payload2", ...]"""
     ) -> str:
         """
         Multi-step chain-of-thought reasoning for complex queries.
-
-        Phase 1: Decompose the problem and enumerate approaches.
-        Phase 2: Evaluate each approach with probability estimates.
-        Phase 3: Simulate consequences and identify failure modes.
-        Phase 4: Synthesize final recommendation.
+        Uses LLM as a secondary reasoning helper — the output is informational,
+        not a binding decision. Hunter's own systems make final calls.
         """
         if await self._check_ollama():
             ctx_block = f"\n[CONTEXT]\n{context}" if context else ""

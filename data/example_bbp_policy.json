@@ -1,7 +1,7 @@
 {
   "program_name": "Acme Corp Bug Bounty",
-  "platform": "hackerone",
-  "program_url": "https://hackerone.com/acme",
+  "platform": "generic",
+  "program_url": "https://acme.com/security",
 
   "in_scope_domains": [
     "*.acme.com",

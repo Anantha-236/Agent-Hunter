@@ -93,30 +93,11 @@ OLLAMA_ENDPOINTS: Dict[str, str] = _cfg("ollama", "endpoints", default={
     "running_models": "/api/ps",
 })
 
-# ── HackerOne API ─────────────────────────────────────────────
-H1_API_BASE: str = os.getenv(
-    "H1_API_BASE",
-    _cfg("hackerone_api", "base_url", default="https://api.hackerone.com/v1"),
-)
-H1_USERNAME: str = os.getenv("H1_USERNAME", "")
-H1_API_IDENTIFIER: str = os.getenv("H1_API_IDENTIFIER", "")  # API Token Identifier (used as Basic Auth username)
-H1_API_TOKEN: str = os.getenv("H1_API_TOKEN", "")
-H1_AUTO_SUBMIT: bool = os.getenv("REPORT_AUTO_SUBMIT", "false").lower() == "true"
-H1_ENDPOINTS: Dict[str, str] = _cfg("hackerone_api", "endpoints", default={})
-H1_SEVERITY_CVSS: Dict[str, list] = _cfg("hackerone_api", "severity_cvss_map", default={
-    "none": [0.0, 0.0], "low": [0.1, 3.9], "medium": [4.0, 6.9],
-    "high": [7.0, 8.9], "critical": [9.0, 10.0],
-})
-H1_REPORT_TEMPLATE: Dict[str, Any] = _cfg("hackerone_api", "report_template", default={})
-H1_REQUEST_HEADERS: Dict[str, str] = _cfg("hackerone_api", "request_headers", default={
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "User-Agent": "AI-Hunter-Agent/1.0",
-})
+# ── HackerOne API — REMOVED (Hunter operates independently) ──
+# All H1 settings removed. Hunter generates its own reports.
 
 # ── Error handling config ─────────────────────────────────────
 OLLAMA_ERROR_HANDLING: Dict[str, Any] = _cfg("error_handling", "ollama_failures", default={})
-H1_ERROR_HANDLING: Dict[str, str] = _cfg("error_handling", "h1_api_failures", default={})
 
 # ── HTTP ──────────────────────────────────────────────────────
 HTTP_TIMEOUT: int = 15

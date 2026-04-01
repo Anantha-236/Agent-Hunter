@@ -146,12 +146,55 @@ class DeepQApproximator:
         self.lr = float(data.get("lr", self.lr))
         self.gamma = float(data.get("gamma", self.gamma))
         self.lambda_trace = float(data.get("lambda_trace", self.lambda_trace))
-        hidden_dims = data.get("hidden_dims", self.hidden_dims)
-        if list(hidden_dims) != self.hidden_dims:
-            self.hidden_dims = list(hidden_dims)
-        for key in ("w1", "b1", "w2", "b2", "w3", "b3"):
-            if key in data:
-                setattr(self, key, data[key])
+        saved_hidden = data.get("hidden_dims", self.hidden_dims)
+
+        # If hidden dims match, we can selectively load weights with
+        # dimension adaptation for changed state_dim / n_actions.
+        h1, h2 = self.hidden_dims
+
+        if list(saved_hidden) == self.hidden_dims:
+            # -- w1: shape [h1, state_dim] --
+            if "w1" in data:
+                self.w1 = self._adapt_matrix(data["w1"], h1, self.state_dim)
+            if "b1" in data:
+                self.b1 = self._adapt_bias(data["b1"], h1)
+            # -- w2: shape [h2, h1] — hidden dims unchanged, load directly --
+            if "w2" in data:
+                self.w2 = self._adapt_matrix(data["w2"], h2, h1)
+            if "b2" in data:
+                self.b2 = self._adapt_bias(data["b2"], h2)
+            # -- w3: shape [n_actions, h2] --
+            if "w3" in data:
+                self.w3 = self._adapt_matrix(data["w3"], self.n_actions, h2)
+            if "b3" in data:
+                self.b3 = self._adapt_bias(data["b3"], self.n_actions)
+        # else: hidden dims differ — keep freshly initialized weights
+
+    @staticmethod
+    def _adapt_matrix(saved: List[List[float]], target_rows: int, target_cols: int) -> List[List[float]]:
+        """Load a saved weight matrix, padding/truncating to (target_rows, target_cols)."""
+        result = []
+        for r in range(target_rows):
+            if r < len(saved):
+                row = list(saved[r])
+                if len(row) < target_cols:
+                    row.extend([0.0] * (target_cols - len(row)))
+                elif len(row) > target_cols:
+                    row = row[:target_cols]
+                result.append(row)
+            else:
+                result.append([0.0] * target_cols)
+        return result
+
+    @staticmethod
+    def _adapt_bias(saved: List[float], target_len: int) -> List[float]:
+        """Load a saved bias vector, padding/truncating to target_len."""
+        bias = list(saved)
+        if len(bias) < target_len:
+            bias.extend([0.0] * (target_len - len(bias)))
+        elif len(bias) > target_len:
+            bias = bias[:target_len]
+        return bias
 
     def output_weight_norms(self) -> List[float]:
         return [sum(weight * weight for weight in row) ** 0.5 for row in self.w3]

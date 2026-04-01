@@ -72,6 +72,19 @@ class ScanMemory:
             CREATE INDEX IF NOT EXISTS idx_findings_target ON findings(url);
             CREATE INDEX IF NOT EXISTS idx_findings_type ON findings(vuln_type);
             CREATE INDEX IF NOT EXISTS idx_scans_target ON scans(target_url);
+
+            CREATE TABLE IF NOT EXISTS scan_reflections (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id         TEXT NOT NULL,
+                target_url      TEXT NOT NULL,
+                reflection_type TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                created_at      TEXT NOT NULL,
+                FOREIGN KEY (scan_id) REFERENCES scans(scan_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reflections_target ON scan_reflections(target_url);
+            CREATE INDEX IF NOT EXISTS idx_reflections_type ON scan_reflections(reflection_type);
         """)
         self._conn.commit()
 
@@ -188,18 +201,160 @@ class ScanMemory:
             "best_score": max((s.get("total_score", 0) for s in scans), default=0),
         }
 
+    # ── Reflections ──────────────────────────────────────────
+
+    def store_reflection(self, scan_id: str, target_url: str,
+                         reflection_type: str, content: str) -> None:
+        """Store a typed reflection from post-scan analysis.
+
+        reflection_type values:
+            waf_bypass              — WAF bypass notes
+            module_skip             — modules to skip on future scans
+            confirmed_path          — confirmed attack paths
+            false_positive_pattern  — patterns that produce false positives
+        """
+        self._conn.execute("""
+            INSERT INTO scan_reflections
+            (scan_id, target_url, reflection_type, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (scan_id, target_url, reflection_type, content,
+              datetime.utcnow().isoformat()))
+        self._conn.commit()
+
+    def get_reflections(self, target_url: str,
+                        reflection_type: str = None,
+                        limit: int = 10) -> List[Dict[str, Any]]:
+        """Get reflections for a target, optionally filtered by type."""
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).hostname
+        if reflection_type:
+            rows = self._conn.execute(
+                "SELECT * FROM scan_reflections "
+                "WHERE target_url LIKE ? AND reflection_type = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (f"%{domain}%", reflection_type, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM scan_reflections "
+                "WHERE target_url LIKE ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (f"%{domain}%", limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Rich Intelligence Queries ────────────────────────────
+
+    def get_confirmed_findings(self, target_url: str,
+                                limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recent confirmed findings with details for AI context."""
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).hostname
+        rows = self._conn.execute(
+            "SELECT vuln_type, url, parameter, severity, discovered_at "
+            "FROM findings WHERE url LIKE ? AND confirmed = 1 "
+            "ORDER BY discovered_at DESC LIMIT ?",
+            (f"%{domain}%", limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_empty_modules(self, target_url: str) -> List[Dict[str, Any]]:
+        """Get modules that ran but found nothing on this target."""
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).hostname
+        rows = self._conn.execute(
+            "SELECT modules_run FROM scans "
+            "WHERE target_url LIKE ? ORDER BY started_at DESC LIMIT 5",
+            (f"%{domain}%",),
+        ).fetchall()
+        module_runs: Dict[str, int] = {}  # module → total run count
+        for row in rows:
+            try:
+                modules = json.loads(row["modules_run"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for mod in modules:
+                module_runs[mod] = module_runs.get(mod, 0) + 1
+        # Check which modules have zero confirmed findings
+        empty = []
+        for mod, runs in module_runs.items():
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM findings "
+                "WHERE url LIKE ? AND module = ? AND confirmed = 1",
+                (f"%{domain}%", mod),
+            ).fetchone()[0]
+            if count == 0 and runs >= 1:
+                empty.append({"module": mod, "times_run": runs, "total_findings": 0})
+        return empty
+
+    def get_injectable_params(self, target_url: str) -> List[str]:
+        """Get parameter names confirmed as injectable on this target."""
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).hostname
+        rows = self._conn.execute(
+            "SELECT DISTINCT parameter FROM findings "
+            "WHERE url LIKE ? AND confirmed = 1 AND parameter != ''",
+            (f"%{domain}%",),
+        ).fetchall()
+        return [r["parameter"] for r in rows]
+
+    # ── AI Context (Enhanced) ────────────────────────────────
+
     def to_ai_context(self, target_url: str) -> str:
-        """Format memory as context for AI brain strategy decisions."""
+        """Format memory as rich intelligence context for AI strategy decisions."""
         profile = self.get_target_profile(target_url)
         if profile["total_scans"] == 0:
             return "No previous scan data for this target."
+
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).hostname or target_url
+
         lines = [
-            f"Previous scans: {profile['total_scans']}",
-            f"Known vulns: {profile['known_vulnerabilities']}",
-            f"Technologies seen: {', '.join(profile['known_technologies']) or 'none'}",
-            f"Last scan: {profile['last_scan']}",
-            f"Best reward score: {profile['best_score']:.1f}",
+            f"PAST INTELLIGENCE FOR: {domain}",
+            f"Previous scans: {profile['total_scans']}  |  "
+            f"Best score: {profile['best_score']:.1f}",
         ]
+
+        # Confirmed findings
+        confirmed = self.get_confirmed_findings(target_url, limit=5)
+        if confirmed:
+            lines.append("\nPreviously confirmed vulnerabilities:")
+            for f in confirmed:
+                param = f"?{f['parameter']}=" if f.get("parameter") else ""
+                lines.append(
+                    f"  - {f['vuln_type']} at {f['url']}{param} "
+                    f"({f['severity'].upper()}, {f['discovered_at'][:10]})"
+                )
+
+        # Empty modules
+        empty = self.get_empty_modules(target_url)
+        if empty:
+            lines.append("\nModules with 0 confirmed findings on this target:")
+            for m in empty:
+                lines.append(
+                    f"  - {m['module']} (ran {m['times_run']}x, 0 findings)"
+                )
+
+        # Injectable params
+        params = self.get_injectable_params(target_url)
+        if params:
+            lines.append(f"\nInjectable parameters (confirmed): {', '.join(params)}")
+
+        # Reflections from past scans
+        reflections = self.get_reflections(target_url, limit=8)
+        if reflections:
+            lines.append("\nPast scan reflections:")
+            for r in reflections:
+                lines.append(f"  [{r['reflection_type']}] {r['content'][:150]}")
+
+        # Strategy hints
+        if empty and confirmed:
+            skip_mods = [m["module"] for m in empty]
+            lines.append(
+                f"\nSkip these: {', '.join(skip_mods[:5])}. "
+                f"Prioritize injection on known-good endpoints."
+            )
+
         return "\n".join(lines)
 
     def close(self) -> None:

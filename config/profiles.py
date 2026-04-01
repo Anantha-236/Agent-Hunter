@@ -24,7 +24,7 @@ class ScopeProfile:
         self.proxy: str = ""
         self.auth: Dict[str, Any] = {}
         self.notes: str = ""
-        self.platform: str = ""  # hackerone, bugcrowd, etc.
+        self.platform: str = ""  # bugcrowd, intigriti, etc.
         self.policy_path: str = ""  # path to BBPPolicy / PreEngagement JSON
         self.policy_data: Optional[Dict[str, Any]] = None  # embedded policy
 

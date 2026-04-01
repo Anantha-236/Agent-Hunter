@@ -203,7 +203,7 @@ Interactive modes:
     parser.add_argument("--insecure", action="store_true",
                         help="Disable TLS certificate verification (NOT recommended)")
     parser.add_argument("--health-check", action="store_true",
-                        help="Run health checks (Ollama, HackerOne) and exit")
+                        help="Run health checks (Ollama) and exit")
     parser.add_argument("--rl-stats", action="store_true",
                         help="Show RL policy diagnostics and exit")
     parser.add_argument("--rl-top", type=int, default=10,
@@ -448,22 +448,7 @@ async def main():
         reporter = Reporter(args.output_dir)
         md_path, json_path = reporter.save(state, executive_summary)
 
-        # Generate HackerOne reports for confirmed findings
-        confirmed = [f for f in state.findings if f.confirmed]
-        if confirmed:
-            from reporting.hackerone_report import generate_hackerone_report, generate_batch_report
-            h1_dir = os.path.join(args.output_dir, "hackerone")
-            os.makedirs(h1_dir, exist_ok=True)
-            for i, finding in enumerate(confirmed, 1):
-                h1_report = generate_hackerone_report(finding)
-                h1_path = os.path.join(h1_dir, f"h1_{i}_{finding.vuln_type}.md")
-                with open(h1_path, "w", encoding="utf-8") as f:
-                    f.write(h1_report)
-            batch = generate_batch_report(confirmed, state.target.url)
-            batch_path = os.path.join(h1_dir, "batch_report.md")
-            with open(batch_path, "w", encoding="utf-8") as f:
-                f.write(batch)
-            print(f"   HackerOne : {h1_dir}/ ({len(confirmed)} reports)")
+        # NOTE: HackerOne integration removed — Hunter operates independently
 
         # Save profile if requested
         if args.save_profile:

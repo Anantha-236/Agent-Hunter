@@ -470,8 +470,8 @@ def create_example_policy(program_name: str = "Example Program") -> BBPPolicy:
     """Create an example policy that users can edit."""
     return BBPPolicy(
         program_name=program_name,
-        platform="hackerone",
-        program_url="https://hackerone.com/example",
+        platform="generic",
+        program_url="https://example.com/security",
         in_scope_domains=["example.com", "*.example.com", "api.example.com"],
         in_scope_urls=[],
         asset_types=["web", "api"],

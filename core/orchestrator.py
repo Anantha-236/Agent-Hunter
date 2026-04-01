@@ -299,6 +299,16 @@ class Orchestrator:
                 await self._phase_validate(state)
                 self._save_checkpoint(state)
 
+            # Phase 5: Self-Reflection (learn from this scan)
+            if self.use_ai and state.phase in ("validate", "scan", "reflect"):
+                state.set_phase("reflect")
+                self._update_tui("reflect")
+                try:
+                    await asyncio.wait_for(self._phase_reflect(state), timeout=60)
+                except asyncio.TimeoutError:
+                    state.log_thought("Reflection timeout after 60s — skipping")
+                self._save_checkpoint(state)
+
             state.set_phase("complete")
 
         except Exception as exc:
@@ -556,10 +566,30 @@ class Orchestrator:
         self.reward.score_recon(self.target.technologies, len(self.target.discovered_urls))
         self._update_tui_score()
 
+        # Generate adaptive payloads if WAF is detected (Priority 5)
+        waf_name = self.target.metadata.get("waf", "")
+        if waf_name and self.use_ai:
+            try:
+                bypass_payloads = await self.ai.generate_adaptive_payloads(
+                    "waf_bypass", {
+                        "technologies": self.target.technologies,
+                        "waf_detected": True,
+                        "waf_name": waf_name,
+                        "failed_payloads": [],
+                    }
+                )
+                if bypass_payloads:
+                    self.target.metadata["waf_bypass_payloads"] = bypass_payloads
+                    state.log_thought(
+                        f"AI generated {len(bypass_payloads)} WAF bypass payloads for {waf_name}"
+                    )
+            except Exception as exc:
+                logger.debug(f"Adaptive payload gen failed: {exc}")
+
     # ── Phase: Strategy ───────────────────────────────────────
 
     async def _phase_strategy(self, state):
-        state.log_thought("Analysing recon for strategy")
+        state.log_thought("Analysing recon for strategy (Rule Engine → RL Agent → LLM helper)")
         try:
             reward_ctx = self.reward.to_ai_context()
             memory_ctx = self.memory.to_ai_context(self.target.url) if self.memory else ""
@@ -569,17 +599,37 @@ class Orchestrator:
             mind_ctx = self.mind.enhance_prompt(tech_query)
             state.log_thought(f"HunterMind context applied: {len(mind_ctx)} chars of experience")
 
+            # Check for related mistakes (Priority 4)
+            mistake_keywords = [t.lower() for t in self.target.technologies[:5]]
+            related_mistakes = self.mind.mistake_memory.check_related_mistakes(
+                "computer_science", topic="scanning", keywords=mistake_keywords
+            )
+            if related_mistakes:
+                mistake_warning = self.mind.mistake_memory.format_mistake_warnings(
+                    related_mistakes
+                )
+                memory_ctx = f"{memory_ctx}\n{mistake_warning}" if memory_ctx else mistake_warning
+                state.log_thought(
+                    f"HunterMind: {len(related_mistakes)} related mistakes recalled"
+                )
+
+            # PRIMARY: Rule engine + optional LLM supplement (now with two-pass)
             strategy = await self.ai.analyse_recon(state.target, reward_ctx, memory_ctx)
             prio = strategy.get("priority_modules", [])
             reasoning = strategy.get("reasoning", "")
             source = strategy.get("source", "unknown")
 
+            # Store strategy for use in _phase_reflect
+            state._strategy = strategy
+
             all_mods = list(self.modules)
-            ai_ordered = [m for m in prio if m in all_mods] + [m for m in all_mods if m not in prio]
+            rule_ordered = [m for m in prio if m in all_mods] + [m for m in all_mods if m not in prio]
+
+            # FINAL DECISION: RL Agent re-ranks based on learned experience
             rl_ordered = self.rl.rank_modules(
-                ai_ordered,
+                rule_ordered,
                 technologies=self.target.technologies,
-                preferred_order=ai_ordered,
+                preferred_order=rule_ordered,
             )
             state.modules_pending = rl_ordered
 
@@ -587,8 +637,8 @@ class Orchestrator:
                 state.log_thought(f"Strategy ({source}): {reasoning[:200]}")
                 self._tui_thought(f"[{source}] {reasoning[:100]}")
 
-            state.log_thought(f"AI module priority: {ai_ordered[:5]}")
-            state.log_thought(f"RL module priority: {rl_ordered[:5]}")
+            state.log_thought(f"Rule Engine priority: {rule_ordered[:5]}")
+            state.log_thought(f"RL Agent final order: {rl_ordered[:5]}")
             state.log_thought(f"RL policy: {self.rl.summary()}")
 
         except Exception as exc:
@@ -745,6 +795,46 @@ class Orchestrator:
                 self.responsibility.on_module_complete(
                     name, findings, module_fp_count, self.target, elapsed_seconds=elapsed
                 )
+
+                # Priority 4: Record confirmed findings as learnings,
+                # false positives as mistakes in HunterMind
+                confirmed_findings = [f for f in findings if f.confirmed]
+                fp_findings = [f for f in findings if f.false_positive]
+                if confirmed_findings:
+                    for cf in confirmed_findings[:3]:  # limit
+                        self.mind.record_learning(
+                            domain="computer_science",
+                            insight=(
+                                f"{cf.vuln_type} confirmed at {cf.url} "
+                                f"param={cf.parameter} via module={name}"
+                            ),
+                            topic="scanning",
+                            source="scan_result",
+                            confidence=0.9,
+                        )
+                if fp_findings:
+                    for fp in fp_findings[:3]:
+                        self.mind.record_mistake(
+                            domain="computer_science",
+                            mistake=(
+                                f"False positive: {fp.vuln_type} at {fp.url} "
+                                f"param={fp.parameter} from module={name}"
+                            ),
+                            correct=(
+                                f"Verify evidence more carefully for {fp.vuln_type} "
+                                f"before confirming — check for actual exploitation proof"
+                            ),
+                            topic="scanning",
+                            severity="low",
+                        )
+
+                # Priority 3: Update AI output quality based on findings
+                ai_output_id = getattr(state, '_strategy', {}).get('_ai_output_id')
+                if ai_output_id and confirmed_findings:
+                    self.ai.rules.update_output_quality(
+                        ai_output_id,
+                        quality_score=min(1.0, len(confirmed_findings) * 0.25),
+                    )
 
                 # Check if responsibility engine says stop
                 stop, stop_reason = self.responsibility.should_stop_scanning()
@@ -906,6 +996,94 @@ class Orchestrator:
         self._tui_thought(f"Validated: {confirmed_count} confirmed, "
                           f"{len(state.findings) - confirmed_count} unconfirmed")
 
+    # ── Phase: Reflection ──────────────────────────────────────
+
+    async def _phase_reflect(self, state):
+        """Post-scan self-reflection: one Ollama call, two destinations.
+
+        Generalizable lessons → HunterMind (cross-target)
+        Target-specific notes  → ScanMemory (per-target)
+        """
+        state.log_thought("Starting post-scan reflection")
+
+        strategy = getattr(state, '_strategy', {}) or {}
+        confirmed = [f for f in state.findings if f.confirmed]
+        empty_mods = [m for m in state.modules_run
+                      if not any(f.module == m for f in state.findings)]
+
+        outcomes = {
+            "total_findings": len(state.findings),
+            "confirmed_findings": len(confirmed),
+            "empty_modules": empty_mods,
+            "waf_detected": bool(self.target.metadata.get("waf")),
+            "waf_name": self.target.metadata.get("waf", ""),
+            "target_url": self.target.url,
+            "technologies": self.target.technologies,
+        }
+
+        reward_summary = self.reward.to_ai_context()
+        reflection = await self.ai.reflect_on_scan(strategy, outcomes, reward_summary)
+
+        if not reflection:
+            state.log_thought("Reflection: no output from AI")
+            return
+
+        # ── Destination 1: HunterMind (generalizable, cross-target) ──
+        for lesson in reflection.get("generalizable_lessons", []):
+            if isinstance(lesson, str) and len(lesson) > 5:
+                self.mind.record_learning(
+                    domain="computer_science",
+                    insight=lesson[:300],
+                    topic="scanning",
+                    source="self_reflection",
+                    confidence=0.7,
+                )
+                state.log_thought(f"Reflection lesson: {lesson[:100]}")
+
+        for mistake_entry in reflection.get("generalizable_mistakes", []):
+            if isinstance(mistake_entry, dict):
+                self.mind.record_mistake(
+                    domain="computer_science",
+                    mistake=str(mistake_entry.get("mistake", ""))[:300],
+                    correct=str(mistake_entry.get("correct", ""))[:300],
+                    topic="scanning",
+                    severity="medium",
+                )
+                state.log_thought(
+                    f"Reflection mistake: {str(mistake_entry.get('mistake', ''))[:100]}"
+                )
+
+        # ── Destination 2: ScanMemory (target-specific) ──
+        if self.memory:
+            waf_notes = reflection.get("target_waf_notes", "")
+            if waf_notes and isinstance(waf_notes, str) and len(waf_notes) > 3:
+                self.memory.store_reflection(
+                    state.scan_id, self.target.url,
+                    "waf_bypass", waf_notes[:500],
+                )
+
+            for mod in reflection.get("target_skip_modules", []):
+                if isinstance(mod, str) and mod:
+                    self.memory.store_reflection(
+                        state.scan_id, self.target.url,
+                        "module_skip", mod,
+                    )
+
+            for path in reflection.get("target_confirmed_paths", []):
+                if isinstance(path, str) and path:
+                    self.memory.store_reflection(
+                        state.scan_id, self.target.url,
+                        "confirmed_path", path[:500],
+                    )
+
+        thinking = reflection.get("_thinking", "")
+        state.log_thought(
+            f"Reflection complete: {len(reflection.get('generalizable_lessons', []))} lessons, "
+            f"{len(reflection.get('generalizable_mistakes', []))} mistakes, "
+            f"{len(reflection.get('target_skip_modules', []))} module skips"
+        )
+        self._tui_thought(f"Reflection: {len(reflection.get('generalizable_lessons', []))} lessons learned")
+
     # ── Report ────────────────────────────────────────────────
 
     async def generate_report(self, state: ScanState) -> str:
@@ -963,6 +1141,10 @@ class Orchestrator:
                 "modules_run": state.modules_run,
                 "modules_pending": state.modules_pending,
                 "findings_count": len(state.findings),
+                "findings": [f.to_dict() for f in state.findings],
+                "discovered_urls": state.target.discovered_urls,
+                "discovered_params": state.target.discovered_params,
+                "technologies": state.target.technologies,
                 "errors": state.errors,
                 "thoughts": state.agent_thoughts,
                 "reward": self.reward.to_dict(),
@@ -982,6 +1164,18 @@ class Orchestrator:
             state.modules_pending = data.get("modules_pending", [])
             state.errors = data.get("errors", [])
             state.agent_thoughts = data.get("thoughts", [])
+            if "discovered_urls" in data:
+                state.target.discovered_urls = data["discovered_urls"]
+            if "discovered_params" in data:
+                state.target.discovered_params = data["discovered_params"]
+            if "technologies" in data:
+                state.target.technologies = data["technologies"]
+            if "findings" in data:
+                for fd in data["findings"]:
+                    state.findings.append(Finding(**{
+                        k: v for k, v in fd.items()
+                        if k in Finding.__dataclass_fields__ and k != "discovered_at"
+                    }))
             if "reward" in data:
                 self.reward = RewardEngine.from_dict(data["reward"])
             saved_phase = data.get("phase", state.phase)

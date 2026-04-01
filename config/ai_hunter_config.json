@@ -39,55 +39,7 @@
       }
     },
 
-    "hackerone_api": {
-      "base_url": "https://api.hackerone.com/v1",
-      "auth": {
-        "type": "basic",
-        "env_username": "Agent-A",
-        "env_api_token": "NIVXyRjhplsOvH6YBHFVUZw60jxNIG9dDUR+avXGRw4="
-      },
-      "endpoints": {
-        "me":                    "/me",
-        "programs_list":         "/me/programs",
-        "program_detail":        "/programs/{handle}",
-        "program_policy":        "/programs/{handle}/policy",
-        "in_scope_assets":       "/programs/{handle}/structured_scopes",
-        "submit_report":         "/reports",
-        "get_report":            "/reports/{report_id}",
-        "list_my_reports":       "/me/reports",
-        "report_comments":       "/reports/{report_id}/activities",
-        "add_comment":           "/reports/{report_id}/activities",
-        "hacktivity_public":     "/hacktivity",
-        "weaknesses_list":       "/weaknesses",
-        "update_report_state":   "/reports/{report_id}"
-      },
-      "request_headers": {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": "AI-Hunter-Agent/1.0"
-      },
-      "report_template": {
-        "data": {
-          "type": "report",
-          "attributes": {
-            "team_handle": "{{PROGRAM_HANDLE}}",
-            "title": "{{VULN_TITLE}}",
-            "vulnerability_information": "{{DETAILED_DESCRIPTION}}",
-            "severity_rating": "{{SEVERITY}}",
-            "weakness_id": "{{CWE_ID}}",
-            "impact": "{{BUSINESS_IMPACT}}",
-            "proof_of_concept": "{{STEPS_TO_REPRODUCE}}"
-          }
-        }
-      },
-      "severity_cvss_map": {
-        "none":     [0.0, 0.0],
-        "low":      [0.1, 3.9],
-        "medium":   [4.0, 6.9],
-        "high":     [7.0, 8.9],
-        "critical": [9.0, 10.0]
-      }
-    },
+    "_hackerone_removed": "HackerOne integration removed — Hunter operates independently",
 
     "agent_pipeline": {
       "phases": {
@@ -129,11 +81,11 @@
           "prompt_template": "Validate this finding: {{FINDING_JSON}}\nIs this a true positive? Generate PoC steps if confirmed."
         },
         "5_reporting": {
-          "description": "Generate reports and optionally submit to HackerOne",
-          "tools": ["reporter", "hackerone_report"],
+          "description": "Generate professional vulnerability reports",
+          "tools": ["reporter"],
           "ollama_task": "Write professional bug report",
           "endpoint": "/api/chat",
-          "prompt_template": "Write a professional HackerOne bug bounty report for:\nVuln: {{VULN_TYPE}}\nTarget: {{URL}}\nPoC: {{POC_STEPS}}\nImpact: {{IMPACT}}"
+          "prompt_template": "Write a professional vulnerability report for:\nVuln: {{VULN_TYPE}}\nTarget: {{URL}}\nPoC: {{POC_STEPS}}\nImpact: {{IMPACT}}"
         }
       }
     },

@@ -19,7 +19,7 @@
       "authorization_type": "bug_bounty_program",
       "safe_harbor_clause_present": true,
       "terms_of_service_reviewed": true,
-      "rules_of_engagement_url": "https://hackerone.com/acme/policy",
+      "rules_of_engagement_url": "https://acme.com/security/policy",
       "emergency_contact": "security@acme.com",
       "legal_jurisdiction": "US"
     },
@@ -79,7 +79,7 @@
       "video_poc_accepted": true,
       "minimum_severity": "low",
       "report_language": "English",
-      "platform": "HackerOne"
+      "platform": "self-hosted"
     },
     "risk_control": {
       "max_severity_to_test": "critical",
