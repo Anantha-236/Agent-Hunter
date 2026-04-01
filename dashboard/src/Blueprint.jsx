@@ -206,7 +206,7 @@ const ARCH_LAYERS = [
             { text: "HackerOne / Bugcrowd APIs", cls: "hot" },
             { text: "Shodan, SecurityTrails, VirusTotal", cls: "" },
             { text: "Jira, Slack, PagerDuty alerting", cls: "" },
-            { text: "Nmap, Nuclei, SQLmap (wrapped)", cls: "" },
+            { text: "Custom recon, payload, and validation pipeline", cls: "" },
             { text: "AWS / GCP / Azure SDKs", cls: "" },
         ]
     },

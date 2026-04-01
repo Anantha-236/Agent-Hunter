@@ -3,12 +3,12 @@ from pathlib import Path
 import startservers
 
 
-def test_load_local_env_reads_env_files_without_overwriting(tmp_path, monkeypatch):
+def test_load_local_env_reads_env_files_without_overwriting(tmp_path):
     (tmp_path / ".env.local").write_text("TELEGRAM_BOT_TOKEN=local-token\nAPI_HOST=127.0.0.1\n", encoding="utf-8")
     (tmp_path / ".env").write_text("TELEGRAM_BOT_TOKEN=env-token\nUI_PORT=9000\n", encoding="utf-8")
-    monkeypatch.setenv("API_HOST", "already-set")
+    isolated_env = {"API_HOST": "already-set"}
 
-    loaded = startservers.load_local_env(tmp_path)
+    loaded = startservers.load_local_env(tmp_path, environ=isolated_env)
 
     assert loaded["TELEGRAM_BOT_TOKEN"] == "local-token"
     assert loaded["API_HOST"] == "already-set"

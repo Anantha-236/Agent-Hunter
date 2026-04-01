@@ -35,7 +35,6 @@ data/*.db
 .env
 .env.local
 *.local.env
-docker-fleet/.env
 
 # Agents skills cache
 .agents/
