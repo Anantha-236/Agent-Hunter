@@ -15,7 +15,7 @@ import json
 import os
 import sqlite3
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -418,6 +418,45 @@ class TestRichMemoryContext:
         empty = scan_memory.get_empty_modules("http://test.vulnweb.com")
         empty_names = [m["module"] for m in empty]
         assert "xxe_scanner" in empty_names
+
+    def test_get_relevant_reflections_prefers_recent_and_high_signal(self, scan_memory):
+        """Relevance ranking should favor fresher, higher-signal reflections."""
+        scan_memory.start_scan("s-rank", "http://test.com")
+        scan_memory.store_reflection(
+            "s-rank", "http://test.com", "module_skip", "legacy skip note"
+        )
+        scan_memory.store_reflection(
+            "s-rank", "http://test.com", "waf_bypass", "waf bypass on cloudflare edge"
+        )
+
+        old_ts = (datetime.utcnow() - timedelta(days=95)).isoformat()
+        scan_memory._conn.execute(
+            "UPDATE scan_reflections SET created_at = ? WHERE content = ?",
+            (old_ts, "legacy skip note"),
+        )
+        scan_memory._conn.commit()
+
+        ranked = scan_memory.get_relevant_reflections(
+            "http://test.com", technologies=["cloudflare"], limit=2
+        )
+
+        assert len(ranked) == 2
+        assert ranked[0]["content"] == "waf bypass on cloudflare edge"
+        assert ranked[0]["relevance_score"] >= ranked[1]["relevance_score"]
+
+    def test_to_ai_context_adds_freshness_note_for_stale_memories(self, scan_memory):
+        """AI context should warn when recalled reflections are stale."""
+        self._seed_scan_data(scan_memory)
+
+        old_ts = (datetime.utcnow() - timedelta(days=45)).isoformat()
+        scan_memory._conn.execute(
+            "UPDATE scan_reflections SET created_at = ? WHERE reflection_type = ?",
+            (old_ts, "module_skip"),
+        )
+        scan_memory._conn.commit()
+
+        ctx = scan_memory.to_ai_context("http://test.vulnweb.com")
+        assert "Freshness note" in ctx
 
 
 # ═══════════════════════════════════════════════════════════════

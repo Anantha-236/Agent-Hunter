@@ -2,16 +2,22 @@
 
 ## Description
 
-Agent-Hunter is an autonomous security testing and vulnerability scanning platform for web applications and APIs. It combines reconnaissance, scanner orchestration, validation, reporting, and a live dashboard so security teams can identify and prioritize vulnerabilities quickly.
+Agent-Hunter is a sophisticated autonomous security scanning agent for web applications and APIs. It combines reconnaissance, adaptive scanner orchestration, reinforcement learning (RL), finding validation, reporting, and live operational interfaces.
+
+This project is not a bug-bounty-only scanner. Bug bounty programs are one authorized usage context among broader security engineering use cases (for example, internal application security testing and authorized external assessments).
 
 Important legal notice: Running this tool against systems without explicit written authorization is illegal in many jurisdictions and may lead to civil claims, criminal prosecution, financial penalties, and account or infrastructure termination. Only scan assets you own or are contractually authorized to test.
 
 ## Features
 
-* Multi-module vulnerability scanning (SQLi, XSS, SSRF, XXE, IDOR, CSRF, misconfig, and more)
+* Autonomous multi-stage scan pipeline: pre-engagement -> recon -> strategy -> scan -> validate -> reflect
+* RL-driven adaptive module selection and reward-based learning across scans
+* Multi-module vulnerability coverage (SQLi, XSS, SSRF, XXE, IDOR, CSRF, misconfig, and more)
+* Policy, scope, and safety enforcement before and during active testing
 * Real-time dashboard with live logs, findings stream, and scan progress
 * API-first architecture with FastAPI endpoints and SSE streaming
-* Automated report generation in Markdown and JSON formats
+* Automated report generation in Markdown, JSON, and HTML formats
+* Checkpoint/resume support for long-running scans
 
 ## Tech Stack
 

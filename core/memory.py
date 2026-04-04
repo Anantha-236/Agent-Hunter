@@ -18,6 +18,9 @@ DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data
 class ScanMemory:
     """SQLite-based persistent memory for the agent."""
 
+    STALE_MEMORY_DAYS = 30
+    DEFAULT_REFLECTION_LOOKBACK_DAYS = 120
+
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         if db_path != ":memory:":
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -223,7 +226,8 @@ class ScanMemory:
 
     def get_reflections(self, target_url: str,
                         reflection_type: str = None,
-                        limit: int = 10) -> List[Dict[str, Any]]:
+                        limit: int = 10,
+                        max_age_days: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get reflections for a target, optionally filtered by type."""
         from urllib.parse import urlparse
         domain = urlparse(target_url).hostname
@@ -241,7 +245,122 @@ class ScanMemory:
                 "ORDER BY created_at DESC LIMIT ?",
                 (f"%{domain}%", limit),
             ).fetchall()
-        return [dict(r) for r in rows]
+        reflections = [dict(r) for r in rows]
+        if max_age_days is None:
+            return reflections
+
+        filtered: List[Dict[str, Any]] = []
+        for row in reflections:
+            age = self._memory_age_days(row.get("created_at", ""))
+            if age is None or age <= max_age_days:
+                filtered.append(row)
+        return filtered
+
+    @staticmethod
+    def _parse_iso_datetime(value: str) -> Optional[datetime]:
+        """Parse ISO timestamps safely, including trailing-Z timestamps."""
+        if not value:
+            return None
+        raw = str(value).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _memory_age_days(cls, created_at: str) -> Optional[int]:
+        """Age in days for a stored memory row; None when timestamp is invalid."""
+        dt = cls._parse_iso_datetime(created_at)
+        if dt is None:
+            return None
+        if dt.tzinfo is not None:
+            now = datetime.now(dt.tzinfo)
+        else:
+            now = datetime.utcnow()
+        return max(0, (now - dt).days)
+
+    @staticmethod
+    def _memory_age_label(age_days: Optional[int]) -> str:
+        if age_days is None:
+            return "unknown age"
+        if age_days == 0:
+            return "today"
+        if age_days == 1:
+            return "yesterday"
+        return f"{age_days} days ago"
+
+    def get_relevant_reflections(self, target_url: str,
+                                 technologies: Optional[List[str]] = None,
+                                 limit: int = 8,
+                                 max_age_days: int = DEFAULT_REFLECTION_LOOKBACK_DAYS
+                                 ) -> List[Dict[str, Any]]:
+        """Return reflections ranked by relevance and freshness.
+
+        Ported from external-memory concepts:
+          - freshness-aware recall (avoid stale guidance)
+          - relevance ranking using lightweight local signals
+        """
+        from urllib.parse import urlparse
+
+        reflections = self.get_reflections(
+            target_url,
+            limit=max(limit * 4, 20),
+            max_age_days=max_age_days,
+        )
+        if not reflections:
+            return []
+
+        host = (urlparse(target_url).hostname or "").lower()
+        keywords = [host]
+        for tech in (technologies or []):
+            if isinstance(tech, str) and tech.strip():
+                keywords.append(tech.strip().lower())
+
+        type_weight = {
+            "waf_bypass": 4,
+            "confirmed_path": 3,
+            "false_positive_pattern": 3,
+            "module_skip": 2,
+        }
+
+        ranked: List[Dict[str, Any]] = []
+        for row in reflections:
+            content = (row.get("content") or "")
+            content_l = content.lower()
+            age_days = self._memory_age_days(row.get("created_at", ""))
+
+            score = type_weight.get(row.get("reflection_type", ""), 1)
+
+            # Fresh memories should influence strategy more strongly.
+            if age_days is not None:
+                if age_days <= 1:
+                    score += 3
+                elif age_days <= 7:
+                    score += 2
+                elif age_days <= self.STALE_MEMORY_DAYS:
+                    score += 1
+
+            for kw in keywords[:8]:
+                if kw and kw in content_l:
+                    score += 1
+
+            enriched = dict(row)
+            enriched["relevance_score"] = score
+            enriched["age_days"] = age_days
+            enriched["age_label"] = self._memory_age_label(age_days)
+            ranked.append(enriched)
+
+        ranked.sort(
+            key=lambda r: (
+                r.get("relevance_score", 0),
+                -(r.get("age_days") if r.get("age_days") is not None else 99999),
+                r.get("created_at", ""),
+            ),
+            reverse=True,
+        )
+        return ranked[:limit]
 
     # ── Rich Intelligence Queries ────────────────────────────
 
@@ -340,12 +459,29 @@ class ScanMemory:
         if params:
             lines.append(f"\nInjectable parameters (confirmed): {', '.join(params)}")
 
-        # Reflections from past scans
-        reflections = self.get_reflections(target_url, limit=8)
+        # Reflections from past scans (freshness-aware ranking)
+        reflections = self.get_relevant_reflections(
+            target_url,
+            technologies=profile.get("known_technologies", []),
+            limit=8,
+        )
         if reflections:
-            lines.append("\nPast scan reflections:")
+            lines.append("\nPast scan reflections (ranked by relevance/freshness):")
             for r in reflections:
-                lines.append(f"  [{r['reflection_type']}] {r['content'][:150]}")
+                lines.append(
+                    f"  [{r['reflection_type']}] {r['content'][:150]} "
+                    f"({r.get('age_label', 'unknown age')})"
+                )
+
+            stale_count = sum(
+                1 for r in reflections
+                if isinstance(r.get("age_days"), int) and r["age_days"] > self.STALE_MEMORY_DAYS
+            )
+            if stale_count:
+                lines.append(
+                    "\nFreshness note: some recalled memories are older than "
+                    f"{self.STALE_MEMORY_DAYS} days. Verify them against current target behavior."
+                )
 
         # Strategy hints
         if empty and confirmed:
