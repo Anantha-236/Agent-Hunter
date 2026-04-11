@@ -1,23 +1,23 @@
 {
-  "scan_id": "de1b9bb6-cae3-4f23-8b9f-a29f68056bd5",
+  "scan_id": "25c0cf0f-6462-4f76-8aab-67c3b243001c",
   "phase": "failed",
   "resume_phase": "scan",
-  "target_url": "10.123.55.99",
+  "target_url": "https://juice-shop.herokuapp.com/",
   "modules_run": [
-    "sensitive_data_exposure"
+    "jwt_scanner"
   ],
   "modules_pending": [
     "crlf_injection",
-    "jwt_scanner",
     "rate_limit_scanner",
     "broken_access_control",
     "lfi_rfi_scanner",
     "cors_scanner",
     "ssl_tls_scanner",
     "header_security",
+    "sensitive_data_exposure",
+    "ssrf",
     "command_injection",
     "xxe_scanner",
-    "ssrf",
     "graphql_scanner",
     "auth_scanner",
     "idor_scanner",
@@ -35,33 +35,44 @@
   "findings_count": 0,
   "findings": [],
   "discovered_urls": [
-    "10.123.55.99"
+    "https://juice-shop.herokuapp.com/chunk-24EZLZ4I.js",
+    "https://juice-shop.herokuapp.com/",
+    "https://juice-shop.herokuapp.com/polyfills.js",
+    "https://juice-shop.herokuapp.com/scripts.js",
+    "https://juice-shop.herokuapp.com/main.js",
+    "https://juice-shop.herokuapp.com/chunk-T3PSKZ45.js",
+    "https://juice-shop.herokuapp.com/chunk-LHKS7QUN.js",
+    "https://juice-shop.herokuapp.com/assets/public/favicon_js.ico",
+    "https://juice-shop.herokuapp.com/styles.css",
+    "https://juice-shop.herokuapp.com/chunk-4MIYPPGW.js",
+    "https://juice-shop.herokuapp.com/chunk-TWZW5B45.js"
   ],
   "discovered_params": {},
   "technologies": [],
   "errors": [
-    "sensitive_data_exposure: list index out of range",
+    "jwt_scanner: list index out of range",
     "list index out of range"
   ],
   "thoughts": [
-    "[03:20:48] Scan started",
-    "[03:20:48] Scope defined: 1 in-scope asset(s). Hunter will respect these boundaries throughout the scan.",
-    "[03:20:48] Responsibility framework active: Hunter will (1) stay in scope, (2) understand what it finds, (3) escalate criticals immediately, (4) learn from results.",
-    "[03:20:48] Applying 6 prior lesson(s) from past scans.",
-    "[03:20:48]   Past lesson: Module 'graphql_scanner' found nothing on tech stack [unknown] (ran for 66s). Consider deprioritizing this module for th",
-    "[03:20:48]   Past lesson: Module 'host_header' found nothing on tech stack [unknown] (ran for 17s). Consider deprioritizing this module for this t",
-    "[03:20:48] Running pre-engagement gate checks",
-    "[03:20:48] No policy/checklist configured \u2014 skipping pre-engagement gate",
-    "[03:20:48] Starting reconnaissance",
-    "[03:21:02] No WAF detected",
-    "[03:21:09] Crawled 1 URLs",
-    "[03:21:09] Analysing recon for strategy (Rule Engine \u2192 RL Agent \u2192 LLM helper)",
-    "[03:21:10] HunterMind context applied: 1389 chars of experience",
-    "[03:21:13] Strategy (rules): Default priority order",
-    "[03:21:13] Rule Engine priority: ['sql_injection', 'ssti', 'crlf_injection', 'command_injection', 'xxe_scanner']",
-    "[03:21:13] RL Agent final order: ['crlf_injection', 'jwt_scanner', 'rate_limit_scanner', 'broken_access_control', 'lfi_rfi_scanner']",
-    "[03:21:13] RL policy: backend=deep | strategy=hybrid | replay=39 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23, jwt_scanner:+0.00, rate_limit_scanner:+0.00",
-    "[03:21:13] WARNING: 0 discovered params \u2014 injection scanners may return nothing"
+    "[05:29:38] Scan started",
+    "[05:29:38] Scope defined: 1 in-scope asset(s). Hunter will respect these boundaries throughout the scan.",
+    "[05:29:38] Responsibility framework active: Hunter will (1) stay in scope, (2) understand what it finds, (3) escalate criticals immediately, (4) learn from results.",
+    "[05:29:38] Applying 6 prior lesson(s) from past scans.",
+    "[05:29:38]   Past lesson: Module 'graphql_scanner' found nothing on tech stack [unknown] (ran for 66s). Consider deprioritizing this module for th",
+    "[05:29:38]   Past lesson: Module 'host_header' found nothing on tech stack [unknown] (ran for 17s). Consider deprioritizing this module for this t",
+    "[05:29:38] Running pre-engagement gate checks",
+    "[05:29:38] No policy/checklist configured \u2014 skipping pre-engagement gate",
+    "[05:29:38] Starting reconnaissance",
+    "[05:29:39] Technologies: []",
+    "[05:29:41] No WAF detected",
+    "[05:29:45] Crawled 11 URLs",
+    "[05:29:45] Analysing recon for strategy (Rule Engine \u2192 RL Agent \u2192 LLM helper)",
+    "[05:29:45] HunterMind context applied: 1389 chars of experience",
+    "[05:29:48] Strategy (rules): Default priority order",
+    "[05:29:48] Rule Engine priority: ['sql_injection', 'ssti', 'crlf_injection', 'command_injection', 'xxe_scanner']",
+    "[05:29:48] RL Agent final order: ['crlf_injection', 'jwt_scanner', 'rate_limit_scanner', 'broken_access_control', 'lfi_rfi_scanner']",
+    "[05:29:48] RL policy: backend=deep | strategy=hybrid | replay=41 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23, jwt_scanner:+0.00, rate_limit_scanner:+0.00",
+    "[05:29:48] WARNING: 0 discovered params \u2014 injection scanners may return nothing"
   ],
   "reward": {
     "total_score": -0.5,
@@ -84,26 +95,26 @@
         "reward": 0.5,
         "module": "",
         "url": "",
-        "detail": "Discovered 1 URLs",
-        "ts": "2026-04-11T03:21:09.884390+00:00"
+        "detail": "Discovered 11 URLs",
+        "ts": "2026-04-11T05:29:45.263781+00:00"
       },
       {
         "action": "no_progress_action",
         "reward": 0.0,
-        "module": "sensitive_data_exposure",
+        "module": "jwt_scanner",
         "url": "",
         "detail": "",
-        "ts": "2026-04-11T03:21:21.843065+00:00"
+        "ts": "2026-04-11T05:29:51.609884+00:00"
       },
       {
         "action": "incorrect_exploit_attempt",
         "reward": -1.0,
-        "module": "sensitive_data_exposure",
+        "module": "jwt_scanner",
         "url": "",
         "detail": "list index out of range",
-        "ts": "2026-04-11T03:21:21.857509+00:00"
+        "ts": "2026-04-11T05:29:51.627526+00:00"
       }
     ]
   },
-  "timestamp": "2026-04-11T03:21:21.884569+00:00"
+  "timestamp": "2026-04-11T05:29:51.654940+00:00"
 }

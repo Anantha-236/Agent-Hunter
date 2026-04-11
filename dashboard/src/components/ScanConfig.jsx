@@ -4,6 +4,15 @@ import ScannerTile from "./shared/ScannerTile";
 /**
  * ScanConfig — Screen 3: Choose scanners, see estimate, launch.
  *
+ * Scanner categories follow the OWASP/PTES vulnerability assessment methodology:
+ *   1. Reconnaissance      — Passive information gathering
+ *   2. Discovery            — Active enumeration & fingerprinting
+ *   3. Vulnerability Assessment — Core security testing
+ *   4. Authentication Audit — Auth mechanism validation
+ *   5. Authorization Audit  — Access control verification
+ *   6. Configuration Audit  — Hardening & posture checks
+ *   7. Advanced Testing     — Business logic & edge cases
+ *
  * Props:
  *   selectedAssets   Object[] from Screen 2
  *   availableModules string[] (module IDs from API)
@@ -12,69 +21,64 @@ import ScannerTile from "./shared/ScannerTile";
  */
 
 const CATEGORY_META = {
-  "Injection":         { icon: "💉", color: "#e74c3c", desc: "Server-side code/command execution" },
-  "Client-Side":       { icon: "🌐", color: "#e67e22", desc: "Browser-based attack vectors" },
-  "File Access":       { icon: "📂", color: "#f39c12", desc: "Unauthorized file system access" },
-  "SSRF":              { icon: "🔗", color: "#9b59b6", desc: "Internal network reachability" },
-  "Authentication":    { icon: "🔑", color: "#2ecc71", desc: "Auth weakness & credential issues" },
-  "Authorization":     { icon: "🛡️", color: "#1abc9c", desc: "Access control bypass" },
-  "Misconfiguration":  { icon: "⚙️", color: "#3498db", desc: "Insecure server/app configuration" },
-  "Redirect":          { icon: "↪️", color: "#e74c3c", desc: "Unvalidated redirects" },
-  "Business Logic":    { icon: "⚡", color: "#f1c40f", desc: "Race conditions & logic flaws" },
-  "Reconnaissance":    { icon: "🔍", color: "#95a5a6", desc: "Infrastructure & TLS posture" },
+  "Reconnaissance":         { icon: "🔍", color: "#95a5a6", desc: "Passive & active information gathering" },
+  "Discovery":              { icon: "📡", color: "#9b59b6", desc: "Enumeration, fingerprinting & exposure detection" },
+  "Vulnerability Assessment": { icon: "🛡️", color: "#e74c3c", desc: "Core injection & exploit testing" },
+  "Authentication Audit":   { icon: "🔑", color: "#2ecc71", desc: "Auth mechanism & session validation" },
+  "Authorization Audit":    { icon: "🔒", color: "#1abc9c", desc: "Access control & privilege verification" },
+  "Configuration Audit":    { icon: "⚙️", color: "#3498db", desc: "Security hardening & posture assessment" },
+  "Advanced Testing":       { icon: "⚡", color: "#f1c40f", desc: "Business logic, race conditions & edge cases" },
 };
 
 const MODULE_META = {
-  /* ── Injection (6) ── */
-  sql_injection:       { name: "SQL Injection",       description: "Error-based, time-based, boolean, UNION & NoSQL injection", engine: "python", category: "Injection" },
-  command_injection:   { name: "Command Injection",   description: "OS command execution via shell operators & encoding bypass", engine: "python", category: "Injection" },
-  ssti:                { name: "SSTI",                description: "Server-side template injection across 10+ engines with RCE POCs", engine: "python", category: "Injection" },
-  crlf_injection:      { name: "CRLF Injection",      description: "HTTP header injection, response splitting & cache poisoning", engine: "python", category: "Injection" },
-  xxe_scanner:         { name: "XXE Scanner",          description: "XML External Entity — file read, SSRF, XInclude, SVG & SOAP", engine: "python", category: "Injection" },
-  graphql_scanner:     { name: "GraphQL Scanner",      description: "Introspection, BOLA, batch queries, depth DoS & SQLi via GraphQL", engine: "python", category: "Injection" },
-
-  /* ── Client-Side (1) ── */
-  xss_scanner:         { name: "XSS Scanner",          description: "Reflected, stored & DOM-based XSS with context-aware detection", engine: "python", category: "Client-Side" },
-
-  /* ── File Access (2) ── */
-  path_traversal:      { name: "Path Traversal",       description: "Directory traversal (Linux + Windows), null bytes & PHP wrappers", engine: "python", category: "File Access" },
-  lfi_rfi_scanner:     { name: "LFI / RFI",            description: "Local/Remote File Inclusion via PHP filter wrappers & encoding", engine: "python", category: "File Access" },
-
-  /* ── SSRF (1) ── */
-  ssrf:                { name: "SSRF",                 description: "Internal network, cloud metadata (AWS/GCP/Azure/DO), URL schemes", engine: "python", category: "SSRF" },
-
-  /* ── Authentication (4) ── */
-  auth_scanner:        { name: "Auth Scanner",         description: "JWT alg:none, default credentials, password reset & OAuth flaws", engine: "python", category: "Authentication" },
-  jwt_scanner:         { name: "JWT Scanner",          description: "Weak signing secrets, missing expiration & alg:none bypass", engine: "python", category: "Authentication" },
-  csrf_scanner:        { name: "CSRF Scanner",         description: "Missing CSRF tokens on forms & token validation bypass testing", engine: "python", category: "Authentication" },
-  rate_limit_scanner:  { name: "Rate Limit Scanner",   description: "Missing rate limiting & X-Forwarded-For header bypass detection", engine: "python", category: "Authentication" },
-
-  /* ── Authorization (2) ── */
-  idor_scanner:        { name: "IDOR Scanner",         description: "Insecure Direct Object Reference, write-IDOR, HPP & path IDOR", engine: "python", category: "Authorization" },
-  broken_access_control: { name: "Broken Access Control", description: "Unauthenticated admin access, horizontal privesc & method exposure", engine: "python", category: "Authorization" },
-
-  /* ── Misconfiguration (5) ── */
-  misconfig_scanner:   { name: "Misconfiguration",     description: "95+ sensitive paths, security headers, CORS, cookies & methods", engine: "python", category: "Misconfiguration" },
-  cors_scanner:        { name: "CORS Scanner",         description: "Origin reflection, null origin trust & wildcard+credentials", engine: "python", category: "Misconfiguration" },
-  header_security:     { name: "Header Security",      description: "Missing/weak CSP, HSTS, X-Frame-Options & Referrer-Policy", engine: "python", category: "Misconfiguration" },
-  sensitive_data_exposure: { name: "Sensitive Data",    description: "Exposed .env, .git, backups, actuator endpoints & leaked secrets", engine: "python", category: "Misconfiguration" },
-  host_header:         { name: "Host Header",          description: "Host header injection, password reset poisoning & cache poisoning", engine: "python", category: "Misconfiguration" },
-
-  /* ── Redirect (1) ── */
-  open_redirect:       { name: "Open Redirect",        description: "32 payloads including encoding bypass, meta-refresh & JS redirect", engine: "python", category: "Redirect" },
-
-  /* ── Business Logic (1) ── */
-  race_condition:      { name: "Race Condition",        description: "TOCTOU via concurrent requests — coupon reuse, double payments", engine: "python", category: "Business Logic" },
-
-  /* ── Reconnaissance (2) ── */
+  /* ── 1. Reconnaissance — Information gathering ── */
   subdomain_takeover:  { name: "Subdomain Takeover",    description: "Dangling DNS to 20+ services (S3, GitHub, Azure, Heroku, etc.)", engine: "python", category: "Reconnaissance" },
   ssl_tls_scanner:     { name: "SSL/TLS Scanner",       description: "Certificate issues, legacy TLS 1.0/1.1, weak ciphers & expiry", engine: "python", category: "Reconnaissance" },
+
+  /* ── 2. Discovery — Enumeration & exposure ── */
+  misconfig_scanner:   { name: "Misconfiguration",      description: "95+ sensitive paths, exposed endpoints, robots.txt & error pages", engine: "python", category: "Discovery" },
+  sensitive_data_exposure: { name: "Sensitive Data",     description: "Exposed .env, .git, backups, actuator endpoints & leaked secrets", engine: "python", category: "Discovery" },
+  graphql_scanner:     { name: "GraphQL Scanner",       description: "Introspection, schema exposure, batch queries & depth DoS", engine: "python", category: "Discovery" },
+
+  /* ── 3. Vulnerability Assessment — Injection & exploit testing ── */
+  sql_injection:       { name: "SQL Injection",         description: "Error-based, time-based, boolean, UNION & NoSQL injection", engine: "python", category: "Vulnerability Assessment" },
+  xss_scanner:         { name: "XSS Scanner",           description: "Reflected, stored & DOM-based XSS with context-aware detection", engine: "python", category: "Vulnerability Assessment" },
+  command_injection:   { name: "Command Injection",     description: "OS command execution via shell operators & encoding bypass", engine: "python", category: "Vulnerability Assessment" },
+  ssti:                { name: "SSTI",                  description: "Server-side template injection across 10+ engines with RCE POCs", engine: "python", category: "Vulnerability Assessment" },
+  ssrf:                { name: "SSRF",                  description: "Internal network, cloud metadata (AWS/GCP/Azure/DO), URL schemes", engine: "python", category: "Vulnerability Assessment" },
+  xxe_scanner:         { name: "XXE Scanner",           description: "XML External Entity — file read, SSRF, XInclude, SVG & SOAP", engine: "python", category: "Vulnerability Assessment" },
+  path_traversal:      { name: "Path Traversal",        description: "Directory traversal (Linux + Windows), null bytes & PHP wrappers", engine: "python", category: "Vulnerability Assessment" },
+  lfi_rfi_scanner:     { name: "LFI / RFI",             description: "Local/Remote File Inclusion via PHP filter wrappers & encoding", engine: "python", category: "Vulnerability Assessment" },
+  crlf_injection:      { name: "CRLF Injection",        description: "HTTP header injection, response splitting & cache poisoning", engine: "python", category: "Vulnerability Assessment" },
+
+  /* ── 4. Authentication Audit — Auth mechanism testing ── */
+  auth_scanner:        { name: "Auth Scanner",          description: "JWT alg:none, default credentials, password reset & OAuth flaws", engine: "python", category: "Authentication Audit" },
+  jwt_scanner:         { name: "JWT Scanner",           description: "Weak signing secrets, missing expiration & alg:none bypass", engine: "python", category: "Authentication Audit" },
+  csrf_scanner:        { name: "CSRF Scanner",          description: "Missing CSRF tokens on forms & token validation bypass testing", engine: "python", category: "Authentication Audit" },
+  rate_limit_scanner:  { name: "Rate Limit Scanner",    description: "Missing rate limiting & X-Forwarded-For header bypass detection", engine: "python", category: "Authentication Audit" },
+
+  /* ── 5. Authorization Audit — Access control testing ── */
+  idor_scanner:        { name: "IDOR Scanner",          description: "Insecure Direct Object Reference, write-IDOR, HPP & path IDOR", engine: "python", category: "Authorization Audit" },
+  broken_access_control: { name: "Broken Access Control", description: "Unauthenticated admin access, horizontal privesc & method exposure", engine: "python", category: "Authorization Audit" },
+
+  /* ── 6. Configuration Audit — Hardening checks ── */
+  cors_scanner:        { name: "CORS Scanner",          description: "Origin reflection, null origin trust & wildcard+credentials", engine: "python", category: "Configuration Audit" },
+  header_security:     { name: "Header Security",       description: "Missing/weak CSP, HSTS, X-Frame-Options & Referrer-Policy", engine: "python", category: "Configuration Audit" },
+  host_header:         { name: "Host Header",           description: "Host header injection, password reset poisoning & cache poisoning", engine: "python", category: "Configuration Audit" },
+
+  /* ── 7. Advanced Testing — Logic & edge cases ── */
+  open_redirect:       { name: "Open Redirect",         description: "32 payloads including encoding bypass, meta-refresh & JS redirect", engine: "python", category: "Advanced Testing" },
+  race_condition:      { name: "Race Condition",         description: "TOCTOU via concurrent requests — coupon reuse, double payments", engine: "python", category: "Advanced Testing" },
 };
 
 const CATEGORIES = [
-  "Injection", "Client-Side", "File Access", "SSRF",
-  "Authentication", "Authorization", "Misconfiguration",
-  "Redirect", "Business Logic", "Reconnaissance",
+  "Reconnaissance",
+  "Discovery",
+  "Vulnerability Assessment",
+  "Authentication Audit",
+  "Authorization Audit",
+  "Configuration Audit",
+  "Advanced Testing",
 ];
 
 // Very rough time estimate per scanner (minutes)
@@ -99,7 +103,7 @@ export default function ScanConfig({ selectedAssets, availableModules, onLaunch,
 
   const scanners = availableModules.map((id) => ({
     id,
-    ...(MODULE_META[id] || { name: id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), description: "Vulnerability scanner module", engine: "python", category: "Injection" }),
+    ...(MODULE_META[id] || { name: id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), description: "Vulnerability scanner module", engine: "python", category: "Vulnerability Assessment" }),
   }));
 
   const groupedScanners = CATEGORIES.map((cat) => ({
@@ -159,12 +163,13 @@ export default function ScanConfig({ selectedAssets, availableModules, onLaunch,
           </button>
         </div>
 
-        {/* Scanner groups */}
+        {/* Scanner groups — ordered by assessment workflow */}
         <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
           {groupedScanners.map((group) => {
             const meta = CATEGORY_META[group.category] || {};
             const enabledCount = group.scanners.filter((s) => enabledIds.has(s.id)).length;
             const badgeBg = (meta.color || "#888") + "19";
+            const stepNumber = CATEGORIES.indexOf(group.category) + 1;
             return (
               <div key={group.category}>
                 <div style={{
@@ -173,7 +178,23 @@ export default function ScanConfig({ selectedAssets, availableModules, onLaunch,
                   gap: "10px",
                   marginBottom: "12px",
                 }}>
-                  <span style={{ fontSize: "1.3rem" }}>{meta.icon || "📦"}</span>
+                  <span style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "var(--text-xs)",
+                    fontWeight: 700,
+                    color: "#fff",
+                    background: meta.color || "#888",
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}>
+                    {stepNumber}
+                  </span>
+                  <span style={{ fontSize: "1.2rem", flexShrink: 0 }}>{meta.icon || "📦"}</span>
                   <h3 style={{
                     fontFamily: "var(--font-ui)",
                     fontSize: "var(--text-md)",
