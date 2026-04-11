@@ -787,23 +787,38 @@ async def stream_scan(scan_id: str):
 async def list_scanners():
     """List all scanner modules with metadata for the dashboard."""
     MODULE_META = {
-        "sql_injection":      {"name": "SQL Injection",       "description": "SQL injection detection via error-based and time-based techniques", "engine": "python", "category": "Vulnerability"},
-        "ssti":               {"name": "SSTI",                "description": "Server-side template injection testing", "engine": "python", "category": "Vulnerability"},
-        "crlf_injection":     {"name": "CRLF Injection",      "description": "Header injection and HTTP response splitting", "engine": "python", "category": "Vulnerability"},
-        "command_injection":  {"name": "Command Injection",   "description": "OS command injection testing", "engine": "python", "category": "Vulnerability"},
-        "xxe_scanner":        {"name": "XXE Scanner",         "description": "XML external entity injection tests", "engine": "python", "category": "Vulnerability"},
-        "xss_scanner":        {"name": "XSS Scanner",         "description": "Reflected, stored, and DOM-based XSS detection", "engine": "python", "category": "Web"},
-        "ssrf":               {"name": "SSRF",                "description": "Server-side request forgery detection", "engine": "python", "category": "Web"},
-        "graphql_scanner":    {"name": "GraphQL Scanner",     "description": "GraphQL introspection and attack surface checks", "engine": "python", "category": "Web"},
-        "auth_scanner":       {"name": "Auth Scanner",        "description": "Authentication weakness detection", "engine": "python", "category": "Web"},
-        "idor_scanner":       {"name": "IDOR Scanner",        "description": "Insecure direct object reference checks", "engine": "python", "category": "Web"},
-        "csrf_scanner":       {"name": "CSRF Scanner",        "description": "Cross-site request forgery detection", "engine": "python", "category": "Web"},
-        "race_condition":     {"name": "Race Condition",      "description": "Concurrent request race condition testing", "engine": "python", "category": "Web"},
-        "path_traversal":     {"name": "Path Traversal",      "description": "File path traversal and LFI/RFI tests", "engine": "python", "category": "Vulnerability"},
-        "misconfig_scanner":  {"name": "Misconfiguration",    "description": "Security misconfiguration and hardening checks", "engine": "python", "category": "Enumeration"},
-        "host_header":        {"name": "Host Header",         "description": "Host header injection attack checks", "engine": "python", "category": "Web"},
-        "open_redirect":      {"name": "Open Redirect",       "description": "Open redirect vulnerability testing", "engine": "python", "category": "Web"},
-        "subdomain_takeover": {"name": "Subdomain Takeover",  "description": "Dangling DNS and subdomain takeover checks", "engine": "python", "category": "Enumeration"},
+        # 1. Reconnaissance
+        "subdomain_takeover": {"name": "Subdomain Takeover",   "description": "Dangling DNS to 20+ services (S3, GitHub, Azure, Heroku, etc.)", "engine": "python", "category": "Reconnaissance"},
+        "ssl_tls_scanner":    {"name": "SSL/TLS Scanner",      "description": "Certificate issues, legacy TLS 1.0/1.1, weak ciphers & expiry", "engine": "python", "category": "Reconnaissance"},
+        # 2. Discovery
+        "misconfig_scanner":  {"name": "Misconfiguration",     "description": "95+ sensitive paths, exposed endpoints, robots.txt & error pages", "engine": "python", "category": "Discovery"},
+        "sensitive_data_exposure": {"name": "Sensitive Data",   "description": "Exposed .env, .git, backups, actuator endpoints & leaked secrets", "engine": "python", "category": "Discovery"},
+        "graphql_scanner":    {"name": "GraphQL Scanner",      "description": "Introspection, schema exposure, batch queries & depth DoS", "engine": "python", "category": "Discovery"},
+        # 3. Vulnerability Assessment
+        "sql_injection":      {"name": "SQL Injection",        "description": "Error-based, time-based, boolean, UNION & NoSQL injection", "engine": "python", "category": "Vulnerability Assessment"},
+        "xss_scanner":        {"name": "XSS Scanner",          "description": "Reflected, stored & DOM-based XSS with context-aware detection", "engine": "python", "category": "Vulnerability Assessment"},
+        "command_injection":  {"name": "Command Injection",    "description": "OS command execution via shell operators & encoding bypass", "engine": "python", "category": "Vulnerability Assessment"},
+        "ssti":               {"name": "SSTI",                 "description": "Server-side template injection across 10+ engines with RCE POCs", "engine": "python", "category": "Vulnerability Assessment"},
+        "ssrf":               {"name": "SSRF",                 "description": "Internal network, cloud metadata (AWS/GCP/Azure/DO), URL schemes", "engine": "python", "category": "Vulnerability Assessment"},
+        "xxe_scanner":        {"name": "XXE Scanner",          "description": "XML External Entity — file read, SSRF, XInclude, SVG & SOAP", "engine": "python", "category": "Vulnerability Assessment"},
+        "path_traversal":     {"name": "Path Traversal",       "description": "Directory traversal (Linux + Windows), null bytes & PHP wrappers", "engine": "python", "category": "Vulnerability Assessment"},
+        "lfi_rfi_scanner":    {"name": "LFI / RFI",            "description": "Local/Remote File Inclusion via PHP filter wrappers & encoding", "engine": "python", "category": "Vulnerability Assessment"},
+        "crlf_injection":     {"name": "CRLF Injection",       "description": "HTTP header injection, response splitting & cache poisoning", "engine": "python", "category": "Vulnerability Assessment"},
+        # 4. Authentication Audit
+        "auth_scanner":       {"name": "Auth Scanner",         "description": "JWT alg:none, default credentials, password reset & OAuth flaws", "engine": "python", "category": "Authentication Audit"},
+        "jwt_scanner":        {"name": "JWT Scanner",          "description": "Weak signing secrets, missing expiration & alg:none bypass", "engine": "python", "category": "Authentication Audit"},
+        "csrf_scanner":       {"name": "CSRF Scanner",         "description": "Missing CSRF tokens on forms & token validation bypass testing", "engine": "python", "category": "Authentication Audit"},
+        "rate_limit_scanner": {"name": "Rate Limit Scanner",   "description": "Missing rate limiting & X-Forwarded-For header bypass detection", "engine": "python", "category": "Authentication Audit"},
+        # 5. Authorization Audit
+        "idor_scanner":       {"name": "IDOR Scanner",         "description": "Insecure Direct Object Reference, write-IDOR, HPP & path IDOR", "engine": "python", "category": "Authorization Audit"},
+        "broken_access_control": {"name": "Broken Access Control", "description": "Unauthenticated admin access, horizontal privesc & method exposure", "engine": "python", "category": "Authorization Audit"},
+        # 6. Configuration Audit
+        "cors_scanner":       {"name": "CORS Scanner",         "description": "Origin reflection, null origin trust & wildcard+credentials", "engine": "python", "category": "Configuration Audit"},
+        "header_security":    {"name": "Header Security",      "description": "Missing/weak CSP, HSTS, X-Frame-Options & Referrer-Policy", "engine": "python", "category": "Configuration Audit"},
+        "host_header":        {"name": "Host Header",          "description": "Host header injection, password reset poisoning & cache poisoning", "engine": "python", "category": "Configuration Audit"},
+        # 7. Advanced Testing
+        "open_redirect":      {"name": "Open Redirect",        "description": "32 payloads including encoding bypass, meta-refresh & JS redirect", "engine": "python", "category": "Advanced Testing"},
+        "race_condition":     {"name": "Race Condition",       "description": "TOCTOU via concurrent requests — coupon reuse, double payments", "engine": "python", "category": "Advanced Testing"},
     }
     result = []
     for mod_id in ENABLED_MODULES:
@@ -811,7 +826,7 @@ async def list_scanners():
             "name": mod_id.replace("_", " ").title(),
             "description": "Vulnerability scanner module",
             "engine": "python",
-            "category": "Vulnerability",
+            "category": "Vulnerability Assessment",
         })
         result.append({"id": mod_id, **meta})
     return result

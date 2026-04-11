@@ -4,14 +4,14 @@ import SeverityBadge from "./shared/SeverityBadge";
 import FindingRow from "./shared/FindingRow";
 
 /**
- * ReportView — Screen 5: Cyber Kill Chain Report.
+ * ReportView — Screen 5: Vulnerability Assessment Report.
  *
- * Shows findings organized by the 7 kill chain stages with:
- *   - Visual kill chain timeline
- *   - Stage-by-stage sections with findings
- *   - Architecture vulnerability mapping
- *   - Attack path visualization
- *   - Executive summary with risk posture
+ * Shows findings organized by multiple views:
+ *   - Assessment Summary: overview with risk posture & severity breakdown
+ *   - By Category: grouped by scanner assessment workflow stages
+ *   - Kill Chain Analysis: maps findings to Cyber Kill Chain stages
+ *   - All Findings: flat list
+ *   - By Scanner: grouped by scanner module
  *
  * Props:
  *   findings     Object[]
@@ -38,6 +38,17 @@ const RISK_COLORS = {
   moderate: "#f1c40f",
   low: "#22c06a",
 };
+
+/* ── Assessment Workflow Categories (matches ScanConfig) ── */
+const ASSESSMENT_CATEGORIES = [
+  { id: "reconnaissance",         name: "Reconnaissance",          icon: "🔍", color: "#95a5a6", modules: ["subdomain_takeover", "ssl_tls_scanner"] },
+  { id: "discovery",              name: "Discovery",               icon: "📡", color: "#9b59b6", modules: ["misconfig_scanner", "sensitive_data_exposure", "graphql_scanner"] },
+  { id: "vulnerability_assessment", name: "Vulnerability Assessment", icon: "🛡️", color: "#e74c3c", modules: ["sql_injection", "xss_scanner", "command_injection", "ssti", "ssrf", "xxe_scanner", "path_traversal", "lfi_rfi_scanner", "crlf_injection"] },
+  { id: "authentication_audit",   name: "Authentication Audit",    icon: "🔑", color: "#2ecc71", modules: ["auth_scanner", "jwt_scanner", "csrf_scanner", "rate_limit_scanner"] },
+  { id: "authorization_audit",    name: "Authorization Audit",     icon: "🔒", color: "#1abc9c", modules: ["idor_scanner", "broken_access_control"] },
+  { id: "configuration_audit",    name: "Configuration Audit",     icon: "⚙️", color: "#3498db", modules: ["cors_scanner", "header_security", "host_header"] },
+  { id: "advanced_testing",       name: "Advanced Testing",        icon: "⚡", color: "#f1c40f", modules: ["open_redirect", "race_condition"] },
+];
 
 function CountUpNumber({ value, color }) {
   const [displayed, setDisplayed] = useState(0);
@@ -74,6 +85,14 @@ function CountUpNumber({ value, color }) {
   );
 }
 
+function _mapFindingToCategory(finding) {
+  const module = (finding.module || finding.scanner || "").toLowerCase();
+  for (const cat of ASSESSMENT_CATEGORIES) {
+    if (cat.modules.includes(module)) return cat.id;
+  }
+  return "vulnerability_assessment";
+}
+
 export default function ReportView({
   findings,
   scanTarget,
@@ -85,8 +104,9 @@ export default function ReportView({
 }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("killchain");
+  const [activeTab, setActiveTab] = useState("category");
   const [expandedStages, setExpandedStages] = useState(new Set());
+  const [expandedCategories, setExpandedCategories] = useState(new Set());
 
   // Fetch kill chain report from backend
   useEffect(() => {
@@ -118,6 +138,16 @@ export default function ReportView({
     return () => { mounted = false; };
   }, [scanId]);
 
+  // Auto-expand categories with findings
+  useEffect(() => {
+    const withFindings = new Set();
+    for (const cat of ASSESSMENT_CATEGORIES) {
+      const catFindings = findings.filter((f) => _mapFindingToCategory(f) === cat.id);
+      if (catFindings.length > 0) withFindings.add(cat.id);
+    }
+    setExpandedCategories(withFindings);
+  }, [findings]);
+
   const sevCounts = {
     Critical: findings.filter((f) => f.severity === "CRITICAL").length,
     High: findings.filter((f) => f.severity === "HIGH").length,
@@ -134,28 +164,51 @@ export default function ReportView({
     });
   };
 
+  const toggleCategory = (catId) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
+  };
+
   // Export functions
   const exportJSON = () => {
     const data = report || { findings, scanTarget, scanDate };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `agent-hunter-killchain-${Date.now()}.json`;
+    a.download = `agent-hunter-report-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
 
   const exportMarkdown = () => {
-    let md = `# Agent-Hunter — Cyber Kill Chain Report\n\n`;
+    let md = `# Agent-Hunter — Vulnerability Assessment Report\n\n`;
     md += `**Target:** ${scanTarget}\n**Date:** ${scanDate}\n**Findings:** ${findings.length}\n\n`;
 
+    // By Category section
+    md += `## Assessment Results by Category\n\n`;
+    for (const cat of ASSESSMENT_CATEGORIES) {
+      const catFindings = findings.filter((f) => _mapFindingToCategory(f) === cat.id);
+      if (catFindings.length === 0) continue;
+      md += `### ${cat.icon} ${cat.name} (${catFindings.length} findings)\n\n`;
+      for (const f of catFindings) {
+        md += `- **[${(f.severity || "").toUpperCase()}]** ${f.title || f.vuln_type} — \`${f.url || ""}\`\n`;
+      }
+      md += `\n`;
+    }
+
+    // Kill Chain section
     if (report) {
       const es = report.executive_summary || {};
-      md += `## Risk Posture\n\n${es.risk_posture || "N/A"}\n\n`;
+      md += `## Kill Chain Analysis\n\n`;
+      md += `**Risk Posture:** ${es.risk_posture || "N/A"}\n`;
       md += `**Kill Chain Coverage:** ${es.kill_chain_coverage || 0}%\n\n`;
 
-      md += `## Kill Chain Stages\n\n`;
       for (const stage of (report.kill_chain_stages || [])) {
+        if (stage.finding_count === 0) continue;
         md += `### ${stage.number}. ${stage.icon} ${stage.name} (${stage.finding_count} findings)\n\n`;
         md += `${stage.description}\n\n`;
 
@@ -181,24 +234,19 @@ export default function ReportView({
           md += `\n`;
         }
       }
-    } else {
-      md += `| Severity | Title | Scanner | Asset |\n|----------|-------|---------|-------|\n`;
-      findings.forEach((f) => {
-        md += `| ${f.severity} | ${f.title} | ${f.scanner} | ${f.asset || "—"} |\n`;
-      });
     }
 
     const blob = new Blob([md], { type: "text/markdown" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `agent-hunter-killchain-${Date.now()}.md`;
+    a.download = `agent-hunter-report-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
 
   const [copied, setCopied] = useState(false);
   const copyAll = () => {
-    let md = `# Agent-Hunter Kill Chain Report\n\nTarget: ${scanTarget}\nDate: ${scanDate}\nFindings: ${findings.length}\n\n`;
+    let md = `# Agent-Hunter Vulnerability Assessment Report\n\nTarget: ${scanTarget}\nDate: ${scanDate}\nFindings: ${findings.length}\n\n`;
     if (report?.executive_summary) {
       md += `Risk: ${report.executive_summary.risk_posture}\nCoverage: ${report.executive_summary.kill_chain_coverage}%\n\n`;
     }
@@ -216,11 +264,23 @@ export default function ReportView({
   const attackPaths = report?.attack_paths || [];
   const riskPosture = (execSummary.risk_posture || "").split("—")[0].trim().toLowerCase();
 
+  // Build category groupings
+  const categoryData = ASSESSMENT_CATEGORIES.map((cat) => {
+    const catFindings = findings.filter((f) => _mapFindingToCategory(f) === cat.id);
+    const maxSev = catFindings.reduce((max, f) => {
+      const rank = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
+      return (rank[(f.severity || "").toUpperCase()] || 0) > (rank[max] || 0) ? (f.severity || "").toLowerCase() : max;
+    }, "info");
+    return { ...cat, findings: catFindings, maxSev };
+  });
+
+  const categoriesWithFindings = categoryData.filter((c) => c.findings.length > 0).length;
+
   return (
     <div className="screen-enter">
       <div className="screen-container">
 
-        {/* ═══ Executive Summary Bar ═══ */}
+        {/* ═══ Assessment Summary Header ═══ */}
         <div style={{
           background: "var(--color-base)",
           border: "1px solid var(--color-border)",
@@ -244,7 +304,7 @@ export default function ReportView({
                 color: "var(--color-text-high)",
                 marginBottom: "4px",
               }}>
-                Cyber Kill Chain Assessment
+                🛡️ Vulnerability Assessment Report
               </div>
               <div style={{
                 fontFamily: "var(--font-mono)",
@@ -293,9 +353,9 @@ export default function ReportView({
           }}>
             {[
               { label: "Total Findings", value: findings.length, color: "var(--color-text-high)" },
-              { label: "Confirmed", value: execSummary.confirmed_findings ?? 0, color: "var(--color-primary)" },
-              { label: "Kill Chain Coverage", value: `${execSummary.kill_chain_coverage ?? 0}%`, color: "var(--color-accent, #e67e22)" },
-              { label: "Stages Hit", value: `${execSummary.stages_with_findings ?? 0}/7`, color: "var(--color-text-mid)" },
+              { label: "Scanners Run", value: scannerCount || 25, color: "var(--color-primary)" },
+              { label: "Categories Hit", value: `${categoriesWithFindings}/7`, color: "var(--color-accent, #e67e22)" },
+              { label: "Kill Chain Coverage", value: `${execSummary.kill_chain_coverage ?? 0}%`, color: "var(--color-text-mid)" },
             ].map((item) => (
               <div key={item.label} style={{
                 display: "flex",
@@ -373,6 +433,7 @@ export default function ReportView({
         }}>
           <div style={{ display: "flex", gap: "0" }}>
             {[
+              { key: "category", label: "By Category" },
               { key: "killchain", label: "Kill Chain" },
               { key: "all", label: "All Findings" },
               { key: "byScanner", label: "By Scanner" },
@@ -418,6 +479,172 @@ export default function ReportView({
           background: "var(--color-base)",
         }}>
 
+          {/* ─── By Category View (DEFAULT) ─── */}
+          {activeTab === "category" && (
+            <div>
+              {/* Category Progress Bar */}
+              <div style={{
+                padding: "16px 24px",
+                borderBottom: "1px solid var(--color-border)",
+                background: "var(--color-surface)",
+              }}>
+                <div style={{
+                  display: "flex",
+                  gap: "4px",
+                  height: "6px",
+                  borderRadius: "3px",
+                  overflow: "hidden",
+                  background: "var(--color-border)",
+                }}>
+                  {categoryData.map((cat) => (
+                    <div key={cat.id} style={{
+                      flex: cat.findings.length > 0 ? Math.max(cat.findings.length, 1) : 0.3,
+                      background: cat.findings.length > 0 ? cat.color : "transparent",
+                      borderRadius: "2px",
+                      opacity: cat.findings.length > 0 ? 1 : 0.2,
+                      transition: "all 300ms ease",
+                    }} title={`${cat.name}: ${cat.findings.length} findings`} />
+                  ))}
+                </div>
+                <div style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "10px",
+                  color: "var(--color-text-low)",
+                  marginTop: "8px",
+                  letterSpacing: "0.5px",
+                }}>
+                  {categoriesWithFindings} of 7 assessment categories reported findings
+                </div>
+              </div>
+
+              {/* Category accordion */}
+              {categoryData.map((cat, idx) => {
+                const isExpanded = expandedCategories.has(cat.id);
+                const hasFindings = cat.findings.length > 0;
+                const catColor = cat.color;
+
+                return (
+                  <div key={cat.id}>
+                    {/* Category header */}
+                    <div
+                      onClick={() => hasFindings && toggleCategory(cat.id)}
+                      style={{
+                        padding: "14px 24px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        cursor: hasFindings ? "pointer" : "default",
+                        borderBottom: "1px solid var(--color-border)",
+                        background: isExpanded ? "var(--color-surface)" : "transparent",
+                        transition: "background 150ms ease",
+                        opacity: hasFindings ? 1 : 0.45,
+                      }}
+                    >
+                      <span style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        color: "#fff",
+                        background: catColor,
+                        width: "22px",
+                        height: "22px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}>
+                        {idx + 1}
+                      </span>
+                      <span style={{ fontSize: "18px" }}>{cat.icon}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{
+                          fontFamily: "var(--font-ui)",
+                          fontSize: "var(--text-sm)",
+                          fontWeight: 600,
+                          color: "var(--color-text-high)",
+                        }}>
+                          {cat.name}
+                        </div>
+                        <div style={{
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "11px",
+                          color: "var(--color-text-low)",
+                          marginTop: "2px",
+                        }}>
+                          {cat.modules.length} scanners in this category
+                        </div>
+                      </div>
+
+                      {/* Finding count + severity */}
+                      {hasFindings && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{
+                            padding: "2px 8px",
+                            borderRadius: "4px",
+                            background: `${SEV_COLORS[cat.maxSev] || catColor}20`,
+                            fontFamily: "var(--font-mono)",
+                            fontSize: "10px",
+                            color: SEV_COLORS[cat.maxSev] || catColor,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                          }}>
+                            {cat.maxSev}
+                          </span>
+                          <span style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: "var(--text-xs)",
+                            color: "var(--color-text-mid)",
+                          }}>
+                            {cat.findings.length} finding{cat.findings.length !== 1 ? "s" : ""}
+                          </span>
+                          <span style={{
+                            fontSize: "12px",
+                            color: "var(--color-text-low)",
+                            transform: isExpanded ? "rotate(180deg)" : "rotate(0)",
+                            transition: "transform 200ms ease",
+                          }}>
+                            ▼
+                          </span>
+                        </div>
+                      )}
+                      {!hasFindings && (
+                        <span style={{
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "11px",
+                          color: "var(--color-text-low)",
+                        }}>
+                          ✓ No findings
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Expanded findings */}
+                    {isExpanded && hasFindings && (
+                      <div style={{ borderBottom: "1px solid var(--color-border)" }}>
+                        {cat.findings.map((f) => (
+                          <FindingRow key={f.id} finding={f} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {findings.length === 0 && (
+                <div style={{
+                  padding: "48px",
+                  textAlign: "center",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--color-text-low)",
+                }}>
+                  No findings detected across any assessment category.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ─── Kill Chain View ─── */}
           {activeTab === "killchain" && (
             <div>
@@ -427,6 +654,16 @@ export default function ReportView({
                 borderBottom: "1px solid var(--color-border)",
                 background: "var(--color-surface)",
               }}>
+                <div style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "10px",
+                  color: "var(--color-text-low)",
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                  marginBottom: "12px",
+                }}>
+                  ⚔️ Cyber Kill Chain Mapping — How attackers could exploit these findings
+                </div>
                 <div style={{
                   display: "flex",
                   alignItems: "center",

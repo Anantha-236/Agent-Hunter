@@ -1,78 +1,62 @@
 {
-  "scan_id": "25c0cf0f-6462-4f76-8aab-67c3b243001c",
+  "scan_id": "18a45ab2-55e7-458d-bcbb-9ba12b7168b2",
   "phase": "failed",
   "resume_phase": "scan",
-  "target_url": "https://juice-shop.herokuapp.com/",
+  "target_url": "https://testphp.vulnweb.com",
   "modules_run": [
-    "jwt_scanner"
+    "rate_limit_scanner"
   ],
   "modules_pending": [
+    "sql_injection",
+    "ssti",
     "crlf_injection",
-    "rate_limit_scanner",
-    "broken_access_control",
-    "lfi_rfi_scanner",
-    "cors_scanner",
-    "ssl_tls_scanner",
-    "header_security",
-    "sensitive_data_exposure",
-    "ssrf",
     "command_injection",
     "xxe_scanner",
+    "xss_scanner",
+    "ssrf",
     "graphql_scanner",
     "auth_scanner",
+    "jwt_scanner",
     "idor_scanner",
+    "broken_access_control",
     "csrf_scanner",
     "race_condition",
     "path_traversal",
+    "lfi_rfi_scanner",
+    "misconfig_scanner",
+    "header_security",
+    "cors_scanner",
+    "sensitive_data_exposure",
     "host_header",
     "open_redirect",
     "subdomain_takeover",
-    "xss_scanner",
-    "misconfig_scanner",
-    "ssti",
-    "sql_injection"
+    "ssl_tls_scanner"
   ],
   "findings_count": 0,
   "findings": [],
   "discovered_urls": [
-    "https://juice-shop.herokuapp.com/chunk-24EZLZ4I.js",
-    "https://juice-shop.herokuapp.com/",
-    "https://juice-shop.herokuapp.com/polyfills.js",
-    "https://juice-shop.herokuapp.com/scripts.js",
-    "https://juice-shop.herokuapp.com/main.js",
-    "https://juice-shop.herokuapp.com/chunk-T3PSKZ45.js",
-    "https://juice-shop.herokuapp.com/chunk-LHKS7QUN.js",
-    "https://juice-shop.herokuapp.com/assets/public/favicon_js.ico",
-    "https://juice-shop.herokuapp.com/styles.css",
-    "https://juice-shop.herokuapp.com/chunk-4MIYPPGW.js",
-    "https://juice-shop.herokuapp.com/chunk-TWZW5B45.js"
+    "https://testphp.vulnweb.com"
   ],
   "discovered_params": {},
   "technologies": [],
   "errors": [
-    "jwt_scanner: list index out of range",
+    "rate_limit_scanner: list index out of range",
     "list index out of range"
   ],
   "thoughts": [
-    "[05:29:38] Scan started",
-    "[05:29:38] Scope defined: 1 in-scope asset(s). Hunter will respect these boundaries throughout the scan.",
-    "[05:29:38] Responsibility framework active: Hunter will (1) stay in scope, (2) understand what it finds, (3) escalate criticals immediately, (4) learn from results.",
-    "[05:29:38] Applying 6 prior lesson(s) from past scans.",
-    "[05:29:38]   Past lesson: Module 'graphql_scanner' found nothing on tech stack [unknown] (ran for 66s). Consider deprioritizing this module for th",
-    "[05:29:38]   Past lesson: Module 'host_header' found nothing on tech stack [unknown] (ran for 17s). Consider deprioritizing this module for this t",
-    "[05:29:38] Running pre-engagement gate checks",
-    "[05:29:38] No policy/checklist configured \u2014 skipping pre-engagement gate",
-    "[05:29:38] Starting reconnaissance",
-    "[05:29:39] Technologies: []",
-    "[05:29:41] No WAF detected",
-    "[05:29:45] Crawled 11 URLs",
-    "[05:29:45] Analysing recon for strategy (Rule Engine \u2192 RL Agent \u2192 LLM helper)",
-    "[05:29:45] HunterMind context applied: 1389 chars of experience",
-    "[05:29:48] Strategy (rules): Default priority order",
-    "[05:29:48] Rule Engine priority: ['sql_injection', 'ssti', 'crlf_injection', 'command_injection', 'xxe_scanner']",
-    "[05:29:48] RL Agent final order: ['crlf_injection', 'jwt_scanner', 'rate_limit_scanner', 'broken_access_control', 'lfi_rfi_scanner']",
-    "[05:29:48] RL policy: backend=deep | strategy=hybrid | replay=41 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23, jwt_scanner:+0.00, rate_limit_scanner:+0.00",
-    "[05:29:48] WARNING: 0 discovered params \u2014 injection scanners may return nothing"
+    "[06:18:23] Scan started",
+    "[06:18:23] Scope defined: 1 in-scope asset(s). Hunter will respect these boundaries throughout the scan.",
+    "[06:18:23] Responsibility framework active: Hunter will (1) stay in scope, (2) understand what it finds, (3) escalate criticals immediately, (4) learn from results.",
+    "[06:18:23] Applying 6 prior lesson(s) from past scans.",
+    "[06:18:23]   Past lesson: Module 'graphql_scanner' found nothing on tech stack [unknown] (ran for 66s). Consider deprioritizing this module for th",
+    "[06:18:23]   Past lesson: Module 'host_header' found nothing on tech stack [unknown] (ran for 17s). Consider deprioritizing this module for this t",
+    "[06:18:23] Running pre-engagement gate checks",
+    "[06:18:23] No policy/checklist configured \u2014 skipping pre-engagement gate",
+    "[06:18:23] Starting reconnaissance",
+    "[06:21:25] No WAF detected",
+    "[06:30:45] Crawled 1 URLs",
+    "[06:30:45] Analysing recon for strategy (Rule Engine \u2192 RL Agent \u2192 LLM helper)",
+    "[06:30:46] WARNING: 0 discovered params \u2014 injection scanners may return nothing"
   ],
   "reward": {
     "total_score": -0.5,
@@ -95,26 +79,26 @@
         "reward": 0.5,
         "module": "",
         "url": "",
-        "detail": "Discovered 11 URLs",
-        "ts": "2026-04-11T05:29:45.263781+00:00"
+        "detail": "Discovered 1 URLs",
+        "ts": "2026-04-11T06:30:45.984076+00:00"
       },
       {
         "action": "no_progress_action",
         "reward": 0.0,
-        "module": "jwt_scanner",
+        "module": "rate_limit_scanner",
         "url": "",
         "detail": "",
-        "ts": "2026-04-11T05:29:51.609884+00:00"
+        "ts": "2026-04-11T06:40:46.078417+00:00"
       },
       {
         "action": "incorrect_exploit_attempt",
         "reward": -1.0,
-        "module": "jwt_scanner",
+        "module": "rate_limit_scanner",
         "url": "",
         "detail": "list index out of range",
-        "ts": "2026-04-11T05:29:51.627526+00:00"
+        "ts": "2026-04-11T06:40:46.092553+00:00"
       }
     ]
   },
-  "timestamp": "2026-04-11T05:29:51.654940+00:00"
+  "timestamp": "2026-04-11T06:40:46.126540+00:00"
 }
