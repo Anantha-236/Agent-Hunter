@@ -69,6 +69,16 @@ export function streamScan(scanId) {
   return new EventSource(`${BASE}/scan/${scanId}/stream`);
 }
 
+/** Check for an active or recently completed scan. */
+export function getActiveScan() {
+  return request("/scan/active");
+}
+
+/** Get Cyber Kill Chain structured report for a scan. */
+export function getScanReport(scanId) {
+  return request(`/scan/${scanId}/report`);
+}
+
 // ── Asset Discovery (Recon) ──────────────────────────────────
 
 /** Start asset discovery for a target. Returns { recon_id, status }. */

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -38,6 +39,314 @@ app.add_middleware(
 MAX_SCANS = 50
 _scans: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _recons: Dict[str, Dict[str, Any]] = {}
+REPORT_DIR = os.path.join(os.path.dirname(__file__), "reports")
+os.makedirs(REPORT_DIR, exist_ok=True)
+
+
+# ── Cyber Kill Chain Mapping ────────────────────────────────────
+
+KILL_CHAIN_STAGES = [
+    {
+        "id": "reconnaissance",
+        "name": "Reconnaissance",
+        "number": 1,
+        "icon": "🔍",
+        "description": "Information gathering about the target — discovering subdomains, technologies, open ports, exposed services, and mapping the attack surface.",
+        "modules": ["subdomain_takeover", "ssl_tls_scanner", "misconfig_scanner", "cors_scanner", "header_security", "sensitive_data_exposure"],
+        "vuln_types": ["information_disclosure", "technology_detection", "subdomain_takeover", "ssl_weakness", "missing_headers", "cors_misconfiguration", "directory_listing"],
+    },
+    {
+        "id": "weaponization",
+        "name": "Weaponization",
+        "number": 2,
+        "icon": "⚔️",
+        "description": "Crafting attack payloads — constructing SQL injection strings, XSS vectors, template injection payloads, and command injection sequences.",
+        "modules": ["xss_scanner", "sql_injection", "ssti", "command_injection", "xxe_scanner", "graphql_scanner"],
+        "vuln_types": ["xss", "sqli", "ssti", "command_injection", "xxe", "graphql_introspection"],
+    },
+    {
+        "id": "delivery",
+        "name": "Delivery",
+        "number": 3,
+        "icon": "📦",
+        "description": "Delivering the attack to the victim — via CSRF tokens, open redirects, host header injection, CRLF response splitting, and phishing vectors.",
+        "modules": ["csrf_scanner", "open_redirect", "host_header", "crlf_injection"],
+        "vuln_types": ["csrf", "open_redirect", "host_header_injection", "crlf_injection", "http_response_splitting"],
+    },
+    {
+        "id": "exploitation",
+        "name": "Exploitation",
+        "number": 4,
+        "icon": "💥",
+        "description": "Exploiting discovered vulnerabilities — triggering SQL injection, executing XSS, exploiting SSRF, achieving path traversal to exfiltrate data or gain access.",
+        "modules": ["sql_injection", "xss_scanner", "ssti", "command_injection", "xxe_scanner", "ssrf", "path_traversal", "lfi_rfi_scanner"],
+        "vuln_types": ["sqli", "xss", "ssti", "command_injection", "xxe", "ssrf", "path_traversal", "lfi", "rfi", "file_inclusion"],
+    },
+    {
+        "id": "installation",
+        "name": "Installation",
+        "number": 5,
+        "icon": "🔧",
+        "description": "Establishing persistence — uploading web shells via file inclusion, writing files through path traversal, or planting backdoors via command injection.",
+        "modules": ["path_traversal", "lfi_rfi_scanner", "command_injection", "xxe_scanner"],
+        "vuln_types": ["file_upload", "file_write", "rfi", "webshell", "path_traversal", "lfi"],
+    },
+    {
+        "id": "command_control",
+        "name": "Command & Control",
+        "number": 6,
+        "icon": "📡",
+        "description": "Establishing outbound communication — leveraging SSRF for internal network access, open redirects for data exfiltration, and host header poisoning for C2 channels.",
+        "modules": ["ssrf", "open_redirect", "host_header"],
+        "vuln_types": ["ssrf", "open_redirect", "host_header_injection", "dns_rebinding"],
+    },
+    {
+        "id": "actions_on_objectives",
+        "name": "Actions on Objectives",
+        "number": 7,
+        "icon": "🎯",
+        "description": "Achieving the attacker's goal — data exfiltration via IDOR, privilege escalation through broken access control, account takeover, and sensitive data exposure.",
+        "modules": ["idor_scanner", "auth_scanner", "jwt_scanner", "broken_access_control", "rate_limit_scanner", "race_condition", "sensitive_data_exposure"],
+        "vuln_types": ["idor", "broken_access_control", "authentication_bypass", "jwt_weakness", "privilege_escalation", "rate_limiting", "race_condition", "data_exposure", "account_takeover"],
+    },
+]
+
+
+def _map_finding_to_kill_chain(finding: Dict[str, Any]) -> str:
+    """Map a single finding to its primary kill chain stage."""
+    module = (finding.get("module") or "").lower()
+    vuln_type = (finding.get("vuln_type") or finding.get("title") or "").lower().replace(" ", "_")
+    severity = (finding.get("severity") or "").lower()
+
+    # Score each stage — higher score = better match
+    best_stage = "exploitation"  # default fallback
+    best_score = 0
+
+    for stage in KILL_CHAIN_STAGES:
+        score = 0
+        # Module match (strong signal)
+        if module in stage["modules"]:
+            score += 10
+        # Vuln type substring match
+        for vt in stage["vuln_types"]:
+            if vt in vuln_type or vuln_type in vt:
+                score += 8
+                break
+        # Partial module name match
+        for sm in stage["modules"]:
+            if sm in module or module in sm:
+                score += 3
+                break
+
+        if score > best_score:
+            best_score = score
+            best_stage = stage["id"]
+
+    return best_stage
+
+
+def _build_kill_chain_report(scan_entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a full Cyber Kill Chain structured report from a scan entry."""
+    findings = scan_entry.get("findings", [])
+    target = scan_entry.get("target", "")
+
+    # Map findings to stages
+    stage_findings: Dict[str, List[Dict[str, Any]]] = {s["id"]: [] for s in KILL_CHAIN_STAGES}
+    for f in findings:
+        stage_id = _map_finding_to_kill_chain(f)
+        f_copy = dict(f)
+        f_copy["kill_chain_stage"] = stage_id
+        stage_findings[stage_id].append(f_copy)
+
+    # Build stage summaries
+    stages = []
+    total_findings = len(findings)
+    stages_with_findings = 0
+    max_severity_overall = "info"
+    severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+    for stage in KILL_CHAIN_STAGES:
+        stage_f = stage_findings[stage["id"]]
+        if stage_f:
+            stages_with_findings += 1
+
+        # Compute stage risk level
+        stage_max_sev = "info"
+        for f in stage_f:
+            sev = (f.get("severity") or "info").lower()
+            if severity_rank.get(sev, 0) > severity_rank.get(stage_max_sev, 0):
+                stage_max_sev = sev
+        if severity_rank.get(stage_max_sev, 0) > severity_rank.get(max_severity_overall, 0):
+            max_severity_overall = stage_max_sev
+
+        # Architecture location analysis
+        arch_locations = []
+        for f in stage_f:
+            url = f.get("url", "")
+            param = f.get("parameter", "")
+            module = f.get("module", "")
+            loc = _infer_architecture_location(url, param, module, f.get("vuln_type", ""))
+            if loc and loc not in arch_locations:
+                arch_locations.append(loc)
+
+        stages.append({
+            "id": stage["id"],
+            "name": stage["name"],
+            "number": stage["number"],
+            "icon": stage["icon"],
+            "description": stage["description"],
+            "finding_count": len(stage_f),
+            "risk_level": stage_max_sev,
+            "findings": stage_f,
+            "architecture_locations": arch_locations,
+        })
+
+    # Executive summary
+    confirmed_count = sum(1 for f in findings if f.get("confirmed"))
+    sev_counts = {}
+    for f in findings:
+        sev = (f.get("severity") or "INFO").upper()
+        sev_counts[sev] = sev_counts.get(sev, 0) + 1
+
+    # Kill chain coverage percentage
+    coverage = round((stages_with_findings / 7) * 100)
+
+    # Build attack paths (chains of findings across stages)
+    attack_paths = _build_attack_paths(stage_findings)
+
+    return {
+        "scan_id": scan_entry.get("scan_id", ""),
+        "target": target,
+        "status": scan_entry.get("status", ""),
+        "started_at": scan_entry.get("started_at", ""),
+        "ended_at": scan_entry.get("ended_at", ""),
+        "executive_summary": {
+            "total_findings": total_findings,
+            "confirmed_findings": confirmed_count,
+            "severity_counts": sev_counts,
+            "kill_chain_coverage": coverage,
+            "stages_with_findings": stages_with_findings,
+            "max_severity": max_severity_overall,
+            "risk_posture": _risk_posture(max_severity_overall, coverage, confirmed_count),
+        },
+        "kill_chain_stages": stages,
+        "attack_paths": attack_paths,
+        "raw_findings": findings,
+    }
+
+
+def _infer_architecture_location(url: str, parameter: str, module: str, vuln_type: str) -> str:
+    """Infer where in the target's architecture a vulnerability exists."""
+    vt = (vuln_type or "").lower()
+    mod = (module or "").lower()
+    param = (parameter or "").lower()
+
+    if "sql" in vt or "sql" in mod:
+        return f"Database Layer → Query Handler (param: {parameter or 'N/A'})"
+    if "xss" in vt or "xss" in mod:
+        return f"Frontend → Output Rendering (param: {parameter or 'N/A'})"
+    if "ssti" in vt:
+        return f"Template Engine → Server-side Rendering"
+    if "command" in vt or "command" in mod:
+        return f"Backend → OS Command Execution"
+    if "ssrf" in vt or "ssrf" in mod:
+        return f"Backend → HTTP Client / URL Fetcher"
+    if "path_traversal" in vt or "lfi" in vt or "rfi" in vt:
+        return f"File System → File Inclusion Handler"
+    if "xxe" in vt:
+        return f"XML Parser → Entity Processing"
+    if "csrf" in vt:
+        return f"Session Management → Token Validation"
+    if "redirect" in vt:
+        return f"Routing → Redirect Handler"
+    if "host_header" in vt or "host" in mod:
+        return f"Web Server → Host Header Processing"
+    if "cors" in vt or "cors" in mod:
+        return f"Web Server → CORS Policy Configuration"
+    if "crlf" in vt:
+        return f"Web Server → HTTP Response Headers"
+    if "idor" in vt or "idor" in mod:
+        return f"Authorization Layer → Object Access Control"
+    if "auth" in mod or "jwt" in mod:
+        return f"Authentication Layer → Credential Validation"
+    if "access_control" in vt or "access_control" in mod:
+        return f"Authorization Layer → Role-Based Access"
+    if "ssl" in mod or "tls" in vt:
+        return f"Transport Layer → TLS Configuration"
+    if "misconfig" in mod or "header" in mod:
+        return f"Web Server → Security Configuration"
+    if "subdomain" in mod:
+        return f"DNS → Subdomain Configuration"
+    if "race" in vt or "race" in mod:
+        return f"Backend → Concurrency Handling"
+    if "sensitive" in mod or "data_exposure" in vt:
+        return f"Application → Data Protection Layer"
+    if "graphql" in mod:
+        return f"API Layer → GraphQL Endpoint"
+
+    return f"Application → {module or 'Unknown Component'}"
+
+
+def _risk_posture(max_severity: str, coverage: int, confirmed: int) -> str:
+    """Compute an overall risk posture label."""
+    if max_severity == "critical" and confirmed > 0:
+        return "CRITICAL — Immediate remediation required"
+    if max_severity == "critical":
+        return "HIGH — Critical vulnerabilities detected, confirmation pending"
+    if max_severity == "high" and confirmed > 0:
+        return "HIGH — Confirmed high-severity vulnerabilities"
+    if max_severity == "high":
+        return "ELEVATED — High-severity vulnerabilities detected"
+    if max_severity == "medium":
+        return "MODERATE — Medium-risk issues found"
+    if coverage > 40:
+        return "MODERATE — Wide attack surface exposed"
+    return "LOW — Minimal vulnerabilities detected"
+
+
+def _build_attack_paths(stage_findings: Dict[str, List[Dict]]) -> List[Dict[str, Any]]:
+    """Build potential attack paths chaining findings across kill chain stages."""
+    paths = []
+    stage_order = [s["id"] for s in KILL_CHAIN_STAGES]
+
+    # Look for multi-stage chains
+    active_stages = [sid for sid in stage_order if stage_findings.get(sid)]
+    if len(active_stages) >= 2:
+        # Build a chain from the findings
+        chain_steps = []
+        for sid in active_stages:
+            top_finding = stage_findings[sid][0]  # highest priority finding in each stage
+            stage_meta = next((s for s in KILL_CHAIN_STAGES if s["id"] == sid), {})
+            chain_steps.append({
+                "stage": sid,
+                "stage_name": stage_meta.get("name", sid),
+                "stage_number": stage_meta.get("number", 0),
+                "finding_title": top_finding.get("title", "Unknown"),
+                "finding_severity": top_finding.get("severity", "INFO"),
+                "url": top_finding.get("url", ""),
+            })
+
+        paths.append({
+            "name": "Primary Attack Chain",
+            "description": f"Spans {len(chain_steps)} kill chain stages from {chain_steps[0]['stage_name']} to {chain_steps[-1]['stage_name']}",
+            "risk": "critical" if any(s.get("finding_severity", "").upper() == "CRITICAL" for s in chain_steps) else "high",
+            "steps": chain_steps,
+        })
+
+    return paths
+
+
+def _save_report_to_disk(scan_id: str, report: Dict[str, Any]) -> None:
+    """Persist a completed scan report to the reports directory."""
+    try:
+        target = (report.get("target") or "").replace("https://", "").replace("http://", "").replace("/", "_")[:40]
+        filename = f"killchain_{target}_{scan_id[:8]}.json"
+        path = os.path.join(REPORT_DIR, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, default=str)
+        logger.info(f"Kill chain report saved: {path}")
+    except Exception as exc:
+        logger.warning(f"Failed to save report to disk: {exc}")
 
 
 def _register_scan(scan_id: str, entry: Dict[str, Any]) -> None:
@@ -155,7 +464,7 @@ MODULE_GROUP_MAP: Dict[str, List[str]] = {
     "web": list(ENABLED_MODULES),
     "sast": ["misconfig_scanner"],
     "dependency": ["misconfig_scanner"],
-    "network": ["subdomain_takeover", "host_header"],
+    "network": ["subdomain_takeover", "host_header", "ssl_tls_scanner"],
 }
 
 DEPTH_TO_CRAWL = {
@@ -300,6 +609,14 @@ async def _run_scan(scan_id: str, req: ScanRequest):
                 entry["status"] = "error"
             entry["ended_at"] = datetime.utcnow().isoformat()
 
+            # Auto-save kill chain report on completion
+            if entry["status"] == "complete":
+                try:
+                    report = _build_kill_chain_report(entry)
+                    _save_report_to_disk(scan_id, report)
+                except Exception as report_exc:
+                    logger.warning(f"Report auto-save failed: {report_exc}")
+
     except Exception as exc:
         logger.exception("Scan %s failed", scan_id)
         entry["status"] = "error"
@@ -308,6 +625,62 @@ async def _run_scan(scan_id: str, req: ScanRequest):
 
 
 # ── Endpoints ──────────────────────────────────────────────────
+
+
+@app.get("/api/scan/active")
+async def get_active_scan():
+    """Return the currently running / starting scan, if any.
+
+    The frontend calls this on load to detect in-progress or recently
+    completed scans and auto-reconnect instead of showing the home page.
+    """
+    # Look for running/starting scans first
+    for scan_id in reversed(_scans):
+        entry = _scans[scan_id]
+        if entry["status"] in ("running", "starting", "paused"):
+            return {
+                "active": True,
+                "scan_id": entry["scan_id"],
+                "status": entry["status"],
+                "target": entry["target"],
+                "phase": entry.get("phase", "init"),
+                "started_at": entry["started_at"],
+                "finding_count": len(entry.get("findings", [])),
+                "log_count": len(entry.get("logs", [])),
+            }
+
+    # No running scan — check for recently completed (within 10 min)
+    for scan_id in reversed(_scans):
+        entry = _scans[scan_id]
+        if entry["status"] in ("complete", "error", "aborted") and entry.get("ended_at"):
+            try:
+                ended = datetime.fromisoformat(entry["ended_at"])
+                elapsed = (datetime.utcnow() - ended).total_seconds()
+                if elapsed < 600:  # 10 minutes
+                    return {
+                        "active": False,
+                        "recent": True,
+                        "scan_id": entry["scan_id"],
+                        "status": entry["status"],
+                        "target": entry["target"],
+                        "phase": entry.get("phase", "complete"),
+                        "started_at": entry["started_at"],
+                        "ended_at": entry["ended_at"],
+                        "finding_count": len(entry.get("findings", [])),
+                    }
+            except (ValueError, TypeError):
+                pass
+
+    return {"active": False, "recent": False}
+
+
+@app.get("/api/scan/{scan_id}/report")
+async def get_scan_report(scan_id: str):
+    """Get a Cyber Kill Chain structured report for a scan."""
+    if scan_id not in _scans:
+        raise HTTPException(404, "Scan not found")
+    return _build_kill_chain_report(_scans[scan_id])
+
 
 @app.post("/api/scan", response_model=ScanSummary, status_code=201)
 async def start_scan(req: ScanRequest):
@@ -408,6 +781,73 @@ async def stream_scan(scan_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/api/scanners")
+async def list_scanners():
+    """List all scanner modules with metadata for the dashboard."""
+    MODULE_META = {
+        "sql_injection":      {"name": "SQL Injection",       "description": "SQL injection detection via error-based and time-based techniques", "engine": "python", "category": "Vulnerability"},
+        "ssti":               {"name": "SSTI",                "description": "Server-side template injection testing", "engine": "python", "category": "Vulnerability"},
+        "crlf_injection":     {"name": "CRLF Injection",      "description": "Header injection and HTTP response splitting", "engine": "python", "category": "Vulnerability"},
+        "command_injection":  {"name": "Command Injection",   "description": "OS command injection testing", "engine": "python", "category": "Vulnerability"},
+        "xxe_scanner":        {"name": "XXE Scanner",         "description": "XML external entity injection tests", "engine": "python", "category": "Vulnerability"},
+        "xss_scanner":        {"name": "XSS Scanner",         "description": "Reflected, stored, and DOM-based XSS detection", "engine": "python", "category": "Web"},
+        "ssrf":               {"name": "SSRF",                "description": "Server-side request forgery detection", "engine": "python", "category": "Web"},
+        "graphql_scanner":    {"name": "GraphQL Scanner",     "description": "GraphQL introspection and attack surface checks", "engine": "python", "category": "Web"},
+        "auth_scanner":       {"name": "Auth Scanner",        "description": "Authentication weakness detection", "engine": "python", "category": "Web"},
+        "idor_scanner":       {"name": "IDOR Scanner",        "description": "Insecure direct object reference checks", "engine": "python", "category": "Web"},
+        "csrf_scanner":       {"name": "CSRF Scanner",        "description": "Cross-site request forgery detection", "engine": "python", "category": "Web"},
+        "race_condition":     {"name": "Race Condition",      "description": "Concurrent request race condition testing", "engine": "python", "category": "Web"},
+        "path_traversal":     {"name": "Path Traversal",      "description": "File path traversal and LFI/RFI tests", "engine": "python", "category": "Vulnerability"},
+        "misconfig_scanner":  {"name": "Misconfiguration",    "description": "Security misconfiguration and hardening checks", "engine": "python", "category": "Enumeration"},
+        "host_header":        {"name": "Host Header",         "description": "Host header injection attack checks", "engine": "python", "category": "Web"},
+        "open_redirect":      {"name": "Open Redirect",       "description": "Open redirect vulnerability testing", "engine": "python", "category": "Web"},
+        "subdomain_takeover": {"name": "Subdomain Takeover",  "description": "Dangling DNS and subdomain takeover checks", "engine": "python", "category": "Enumeration"},
+    }
+    result = []
+    for mod_id in ENABLED_MODULES:
+        meta = MODULE_META.get(mod_id, {
+            "name": mod_id.replace("_", " ").title(),
+            "description": "Vulnerability scanner module",
+            "engine": "python",
+            "category": "Vulnerability",
+        })
+        result.append({"id": mod_id, **meta})
+    return result
+
+
+@app.post("/api/scan/{scan_id}/pause")
+async def pause_scan(scan_id: str):
+    """Pause or resume a running scan."""
+    if scan_id not in _scans:
+        raise HTTPException(404, "Scan not found")
+    entry = _scans[scan_id]
+    if entry["status"] not in ("running", "paused"):
+        raise HTTPException(400, f"Cannot pause scan in status: {entry['status']}")
+    if entry["status"] == "paused":
+        entry["status"] = "running"
+        return {"status": "running"}
+    else:
+        entry["status"] = "paused"
+        return {"status": "paused"}
+
+
+@app.post("/api/scan/{scan_id}/abort")
+async def abort_scan(scan_id: str):
+    """Abort a running scan."""
+    if scan_id not in _scans:
+        raise HTTPException(404, "Scan not found")
+    entry = _scans[scan_id]
+    if entry["status"] in ("complete", "aborted", "error"):
+        raise HTTPException(400, f"Scan already in terminal state: {entry['status']}")
+    entry["status"] = "aborted"
+    entry["ended_at"] = datetime.utcnow().isoformat()
+    entry["logs"].append({
+        "ts": datetime.utcnow().strftime("%H:%M:%S"),
+        "msg": "Scan aborted by user",
+    })
+    return {"status": "aborted"}
 
 
 @app.get("/api/scans")

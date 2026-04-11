@@ -1,27 +1,27 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   startScan as apiStartScan,
-  getScan,
   listScans,
   listModules,
   getSettings,
   saveSettings,
-  streamScan,
-  startRecon,
-  streamRecon,
+  getActiveScan,
+  getScan,
 } from "./api";
 
-/* Deep Void Intelligence UI + real backend wiring */
+import TargetInput from "./components/TargetInput";
+import AssetDiscovery from "./components/AssetDiscovery";
+import ScanConfig from "./components/ScanConfig";
+import LiveConsole from "./components/LiveConsole";
+import ReportView from "./components/ReportView";
+import useScanStream from "./hooks/useScanStream";
+import { getPersistedScan } from "./hooks/useScanStream";
 
-const PHASE_PROGRESS = {
-  init: 5,
-  recon: 25,
-  strategy: 45,
-  scan: 75,
-  validate: 90,
-  complete: 100,
-};
+import "./index.css";
+import "./theme.css";
+import "./animations.css";
 
+/* ── Constants ── */
 const DEFAULT_SETTINGS = {
   timeout: 30,
   userAgent: "AgentHunter/2.1",
@@ -33,109 +33,6 @@ const DEFAULT_SETTINGS = {
   followRedirects: true,
   saveLogs: true,
 };
-
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@300;400;500&display=swap');
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html,body,#root{height:100%;}
-body{font-family:'Outfit',sans-serif;background:#03040a;color:#cbd5e1;overflow:hidden;cursor:default;}
-::-webkit-scrollbar{width:3px;height:3px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:rgba(99,235,215,0.2);border-radius:10px;}
-.aurora{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 80% 50% at 10% 0%,rgba(99,235,215,0.07) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 90% 0%,rgba(167,139,250,0.07) 0%,transparent 60%),radial-gradient(ellipse 40% 30% at 50% 100%,rgba(99,235,215,0.04) 0%,transparent 50%);} 
-.shell{position:relative;z-index:2;display:grid;grid-template-columns:220px 1fr;grid-template-rows:56px 1fr;height:100vh;}
-.topbar{grid-column:1/-1;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(6,8,16,0.85);backdrop-filter:blur(20px);gap:16px;}
-.logo-text{font-family:'Syne',sans-serif;font-weight:800;font-size:15px;letter-spacing:3px;text-transform:uppercase;color:#f1f5f9;}
-.logo-sub{font-family:'JetBrains Mono',monospace;font-size:9px;color:#475569;letter-spacing:2px;margin-top:1px;}
-.topbar-right{margin-left:auto;display:flex;align-items:center;gap:20px;}
-.status-pill{display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:100px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.03);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1px;color:#94a3b8;}
-.status-pill.active{border-color:rgba(99,235,215,0.3);color:#63ebd7;}
-.dot{width:7px;height:7px;border-radius:50%;background:#475569;}
-.dot.cyan{background:#63ebd7;box-shadow:0 0 8px #63ebd7;animation:dotPulse 2s infinite;}
-@keyframes dotPulse{0%,100%{opacity:1}50%{opacity:0.3}}
-.sidebar{border-right:1px solid rgba(255,255,255,0.07);background:rgba(6,8,16,0.6);backdrop-filter:blur(20px);padding:20px 12px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;}
-.nav-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;border:1px solid transparent;cursor:pointer;transition:all 0.15s;font-family:'Outfit',sans-serif;font-size:13px;font-weight:400;color:#475569;background:transparent;width:100%;text-align:left;}
-.nav-item:hover{color:#cbd5e1;background:rgba(255,255,255,0.03);} .nav-item.active{color:#f1f5f9;background:linear-gradient(135deg,rgba(99,235,215,0.1),rgba(167,139,250,0.08));border-color:rgba(99,235,215,0.15);} .nav-item.active .nav-icon{color:#63ebd7;}
-.nav-icon{font-size:15px;width:18px;text-align:center;flex-shrink:0;}
-.nav-badge{font-family:'JetBrains Mono',monospace;font-size:10px;padding:1px 7px;border-radius:100px;background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.2);}
-.sidebar-section{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:2px;color:#475569;text-transform:uppercase;padding:16px 14px 6px;}
-.sidebar-footer{margin-top:auto;padding:12px 14px;border-top:1px solid rgba(255,255,255,0.07);font-family:'JetBrains Mono',monospace;font-size:9px;color:#475569;letter-spacing:1px;}
-.main{overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:24px;}
-.card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:14px;backdrop-filter:blur(10px);overflow:hidden;}
-.card-lit{border-color:rgba(99,235,215,0.25);background:rgba(99,235,215,0.03);box-shadow:0 0 40px rgba(99,235,215,0.05),inset 0 1px 0 rgba(99,235,215,0.1);} 
-.card-header{padding:16px 22px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;}
-.card-title{font-family:'Syne',sans-serif;font-size:13px;font-weight:600;color:#f1f5f9;letter-spacing:0.5px;} .card-body{padding:20px 22px;}
-.page-title{font-family:'Syne',sans-serif;font-size:26px;font-weight:800;color:#f1f5f9;line-height:1.1;} .page-sub{font-family:'JetBrains Mono',monospace;font-size:11px;color:#475569;margin-top:4px;letter-spacing:1px;} .accent{color:#63ebd7;}
-.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.stat-tile{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden;}
-.stat-tile::before{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;}
-.stat-tile.crit::before{background:linear-gradient(90deg,#f87171,transparent);} .stat-tile.high::before{background:linear-gradient(90deg,#fbbf24,transparent);} .stat-tile.med::before{background:linear-gradient(90deg,#a78bfa,transparent);} .stat-tile.low::before{background:linear-gradient(90deg,#4ade80,transparent);} 
-.stat-num{font-family:'Syne',sans-serif;font-size:36px;font-weight:800;line-height:1;margin-bottom:6px;} .stat-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;}
-.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all 0.15s;white-space:nowrap;}
-.btn-ghost{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);color:#94a3b8;} .btn-ghost:hover{background:rgba(255,255,255,0.06);color:#cbd5e1;}
-.btn-solid{background:linear-gradient(135deg,#63ebd7,#2dd4bf);color:#000;font-weight:600;border:none;} .btn-solid:hover{box-shadow:0 0 30px rgba(99,235,215,0.3);}
-.btn-danger{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);color:#f87171;}
-.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;letter-spacing:0.5px;white-space:nowrap;}
-.badge-CRITICAL{background:rgba(248,113,113,0.12);color:#f87171;border:1px solid rgba(248,113,113,0.25);} .badge-HIGH{background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.25);} .badge-MEDIUM{background:rgba(167,139,250,0.12);color:#a78bfa;border:1px solid rgba(167,139,250,0.25);} .badge-LOW,.badge-INFO{background:rgba(74,222,128,0.12);color:#4ade80;border:1px solid rgba(74,222,128,0.25);} 
-.chip{display:inline-block;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);color:#475569;}
-.progress-track{height:4px;border-radius:2px;background:rgba(255,255,255,0.06);overflow:hidden;} .progress-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,#63ebd7,#a78bfa);transition:width 0.4s ease;}
-.field{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:11px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;color:#cbd5e1;outline:none;} .field::placeholder{color:#475569;}
-.field-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#475569;margin-bottom:7px;display:block;}
-.toggle-wrap{width:42px;height:24px;position:relative;cursor:pointer;} .toggle-track{width:100%;height:100%;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.07);} .toggle-wrap.on .toggle-track{background:rgba(99,235,215,0.2);border-color:rgba(99,235,215,0.4);} .toggle-thumb{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#475569;transition:transform 0.2s,background 0.2s;} .toggle-wrap.on .toggle-thumb{transform:translateX(18px);background:#63ebd7;}
-.module-card{padding:16px 18px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.03);display:flex;align-items:center;gap:14px;cursor:pointer;} .module-card.on{border-color:rgba(99,235,215,0.2);background:rgba(99,235,215,0.04);} 
-.finding-row{display:grid;grid-template-columns:90px 1fr 80px 100px;align-items:center;gap:12px;padding:13px 22px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.07);} .finding-row:hover{background:rgba(255,255,255,0.03);} .finding-row.selected{background:rgba(99,235,215,0.04);} 
-.find-name{font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;color:#f1f5f9;} .find-loc{font-family:'JetBrains Mono',monospace;font-size:10px;color:#475569;margin-top:2px;}
-.terminal{background:rgba(3,4,10,0.9);border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.07);} .terminal-bar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.02);} .t-dot{width:10px;height:10px;border-radius:50%;} .terminal-body{padding:14px 16px;height:280px;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:2;} .t-line{display:flex;gap:10px;} .t-ts{color:#475569;flex-shrink:0;}
-.tab-filter{display:flex;gap:2px;border-bottom:1px solid rgba(255,255,255,0.07);padding:0 22px;} .tab-btn{padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#475569;cursor:pointer;border:none;background:transparent;} .tab-btn.active{color:#f1f5f9;border-bottom:2px solid #63ebd7;}
-.detail-panel{background:rgba(99,235,215,0.03);border:1px solid rgba(99,235,215,0.15);border-radius:10px;padding:20px 22px;} .detail-title{font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:8px;} .detail-desc{font-size:13px;color:#cbd5e1;line-height:1.7;}
-.setting-row{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.07);} .setting-row:last-child{border-bottom:none;} .setting-name{font-size:13px;color:#cbd5e1;font-weight:500;} .setting-desc{font-size:11px;color:#475569;margin-top:2px;font-family:'JetBrains Mono',monospace;}
-.cov-row{margin-bottom:14px;} .cov-label{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:#475569;margin-bottom:6px;letter-spacing:1px;text-transform:uppercase;} .cov-label span:last-child{color:#63ebd7;}
-@media (max-width: 980px){.shell{grid-template-columns:1fr;grid-template-rows:56px auto 1fr}.sidebar{border-right:none;border-bottom:1px solid rgba(255,255,255,0.07);padding:10px}.main{padding:18px}.stat-grid{grid-template-columns:1fr 1fr}.finding-row{grid-template-columns:80px 1fr}.finding-row .chip,.finding-row span:last-child{display:none}}
-`;
-
-function toHexColor(msg) {
-  const m = (msg || "").toLowerCase();
-  if (m.includes("critical")) return "#f87171";
-  if (m.includes("high")) return "#fbbf24";
-  if (m.includes("medium")) return "#a78bfa";
-  if (m.includes("complete") || m.includes("started") || m.includes("scan")) return "#63ebd7";
-  return "#94a3b8";
-}
-
-function normalizeFinding(raw, idx) {
-  const sev = (raw.severity || "LOW").toUpperCase();
-  const cat = (raw.module || "unknown").toLowerCase();
-  const where = [
-    raw.url ? `URL: ${raw.url}` : "",
-    raw.parameter ? `Parameter: ${raw.parameter}` : "",
-    raw.module ? `Module: ${raw.module}` : "",
-  ].filter(Boolean).join(" | ");
-  const how = [
-    raw.method ? `Method: ${raw.method}` : "",
-    raw.payload ? `Payload: ${String(raw.payload).slice(0, 160)}` : "",
-    raw.evidence ? `Evidence: ${String(raw.evidence).slice(0, 260)}` : "",
-  ].filter(Boolean).join("\n");
-
-  return {
-    id: raw.id || idx + 1,
-    type: raw.title || raw.vuln_type || "Finding",
-    loc: raw.url || "",
-    sev,
-    cat,
-    cve: raw.cwe_id || "N/A",
-    ts: (raw.discovered_at || "").slice(11, 19) || "--:--:--",
-    desc: raw.description || "No description",
-    where: where || "Location details not available",
-    how: how || "Technical evidence not available",
-    remediation: raw.remediation || "No remediation guidance available",
-  };
-}
-
-function parseEventData(data, fallback = {}) {
-  try {
-    return JSON.parse(data);
-  } catch {
-    return fallback;
-  }
-}
 
 function toUiSettings(raw = {}) {
   return {
@@ -151,791 +48,337 @@ function toUiSettings(raw = {}) {
   };
 }
 
-function Toggle({ on, onChange }) {
-  return (
-    <div className={`toggle-wrap ${on ? "on" : ""}`} onClick={() => onChange(!on)}>
-      <div className="toggle-track" />
-      <div className="toggle-thumb" />
-    </div>
-  );
-}
+/* ── Screen enum ── */
+const SCREEN = {
+  TARGET:      "target",
+  ASSETS:      "assets",
+  CONFIG:      "config",
+  LIVE:        "live",
+  REPORT:      "report",
+};
 
-function Badge({ s }) {
-  return <span className={`badge badge-${s}`}>{s}</span>;
-}
+const SCREEN_LABELS = {
+  [SCREEN.TARGET]: "Target Input",
+  [SCREEN.ASSETS]: "Asset Discovery",
+  [SCREEN.CONFIG]: "Scanner Config",
+  [SCREEN.LIVE]:   "Live Console",
+  [SCREEN.REPORT]: "Report",
+};
 
-function formatModuleName(moduleId) {
-  return moduleId
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
+export default function App() {
+  /* ── Navigation ── */
+  const [screen, setScreen] = useState(SCREEN.TARGET);
+  const [initializing, setInitializing] = useState(true);
 
-function moduleHint(moduleId) {
-  const hints = {
-    sql_injection: "SQL injection detection",
-    ssti: "Server-side template injection",
-    crlf_injection: "Header injection and response splitting",
-    command_injection: "OS command injection testing",
-    xxe_scanner: "XML external entity injection",
-    xss_scanner: "Reflected, stored, and DOM XSS",
-    ssrf: "Server-side request forgery",
-    graphql_scanner: "GraphQL attack surface checks",
-    auth_scanner: "Authentication weaknesses",
-    idor_scanner: "Object-level authorization checks",
-    csrf_scanner: "Cross-site request forgery",
-    race_condition: "Concurrent request race checks",
-    path_traversal: "File path traversal tests",
-    misconfig_scanner: "Security misconfiguration checks",
-    host_header: "Host header attack checks",
-    open_redirect: "Open redirect tests",
-    subdomain_takeover: "Dangling DNS and takeover checks",
-  };
-  return hints[moduleId] || "Vulnerability scanner module";
-}
-
-function Dashboard({ onNavigate, scanning, findings, scanTarget }) {
-  const crit = findings.filter((f) => f.sev === "CRITICAL").length;
-  const high = findings.filter((f) => f.sev === "HIGH").length;
-  const med = findings.filter((f) => f.sev === "MEDIUM").length;
-  const low = findings.filter((f) => f.sev === "LOW" || f.sev === "INFO").length;
-  const cats = ["web", "network", "sast", "dependency"];
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div className="page-title">Threat <span className="accent">Overview</span></div>
-          <div className="page-sub">Last scan target · {scanTarget || "N/A"}</div>
-        </div>
-        <button className="btn btn-solid" onClick={() => onNavigate("scan")}>▶ New Scan</button>
-      </div>
-
-      <div className="stat-grid">
-        {[
-          { n: crit, label: "Critical", cls: "crit", color: "#f87171" },
-          { n: high, label: "High", cls: "high", color: "#fbbf24" },
-          { n: med, label: "Medium", cls: "med", color: "#a78bfa" },
-          { n: low, label: "Low", cls: "low", color: "#4ade80" },
-        ].map(({ n, label, cls, color }) => (
-          <div key={label} className={`stat-tile ${cls}`}>
-            <div className="stat-num" style={{ color }}>{n}</div>
-            <div className="stat-label" style={{ color }}>{label}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Module Coverage</div>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569" }}>{findings.length} FINDINGS</span>
-        </div>
-        <div className="card-body">
-          {cats.map((cat) => {
-            const n = findings.filter((f) => f.cat.includes(cat)).length;
-            const pct = findings.length ? (n / findings.length) * 100 : 0;
-            return (
-              <div key={cat} className="cov-row">
-                <div className="cov-label"><span>{cat}</span><span>{n} findings</span></div>
-                <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%` }} /></div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Critical Findings</div>
-          <button className="btn btn-ghost" style={{ padding: "5px 12px", fontSize: 11 }} onClick={() => onNavigate("findings")}>View all →</button>
-        </div>
-        {findings.filter((f) => f.sev === "CRITICAL").slice(0, 6).map((f) => (
-          <div key={f.id} className="finding-row">
-            <Badge s={f.sev} />
-            <div><div className="find-name">{f.type}</div><div className="find-loc">{f.loc}</div></div>
-            <span className="chip">{f.cat}</span>
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#a78bfa" }}>{f.cve}</span>
-          </div>
-        ))}
-        {!findings.length && <div style={{ padding: 22, color: "#475569", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>No findings yet.</div>}
-      </div>
-    </div>
-  );
-}
-
-function ScanPage({ onLaunch, availableModules }) {
-  const [step, setStep] = useState(1);
-  /* Step 1: target config */
-  const [url, setUrl] = useState("");
-  const [inScope, setInScope] = useState("");
-  const [outScope, setOutScope] = useState("");
-  const [instructions, setInstructions] = useState("");
-  /* Step 2: discovery */
-  const [reconStatus, setReconStatus] = useState("idle");
-  const [subdomains, setSubdomains] = useState([]);
-  const [ports, setPorts] = useState([]);
-  const [technologies, setTechnologies] = useState([]);
-  const [reconLogs, setReconLogs] = useState([]);
-  const reconSSE = useRef(null);
-  const logRef = useRef(null);
-  /* Step 3: selection */
-  const [selectedAssets, setSelectedAssets] = useState([]);
-  const [selectedModules, setSelectedModules] = useState([]);
-  const [depth, setDepth] = useState("medium");
-  const [threads, setThreads] = useState("4");
-
-  useEffect(() => {
-    if (!Array.isArray(availableModules) || !availableModules.length) return;
-    setSelectedModules((prev) => {
-      if (!prev.length) return [...availableModules];
-      const valid = prev.filter((m) => availableModules.includes(m));
-      return valid.length ? valid : [...availableModules];
-    });
-  }, [availableModules]);
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [reconLogs]);
-  useEffect(() => () => reconSSE.current?.close(), []);
-
-  /* build assets from discovered subs+ports */
-  const buildAssets = () => {
-    const byHost = {};
-    ports.forEach((p) => { (byHost[p.host] ??= []).push(p); });
-    const out = [];
-    subdomains.forEach((s) => {
-      const hp = byHost[s.hostname];
-      if (hp) {
-        hp.forEach((p) => {
-          const scheme = ["https", "https-alt"].includes(p.service) || p.port === 443 || p.port === 8443 ? "https" : "http";
-          const suffix = p.port === 80 || p.port === 443 ? "" : `:${p.port}`;
-          out.push({ id: `${s.hostname}:${p.port}`, label: `${s.hostname}:${p.port}`, url: `${scheme}://${s.hostname}${suffix}`, host: s.hostname, port: p.port, service: p.service, ip: s.ip });
-        });
-      } else {
-        out.push({ id: `${s.hostname}:0`, label: s.hostname, url: `https://${s.hostname}`, host: s.hostname, port: 0, service: "resolved", ip: s.ip });
-      }
-    });
-    return out;
-  };
-  const assets = buildAssets();
-
-  const discover = async () => {
-    if (!url) return;
-    setStep(2);
-    setReconStatus("running");
-    setSubdomains([]);
-    setPorts([]);
-    setTechnologies([]);
-    setReconLogs([]);
-    try {
-      const { recon_id } = await startRecon({
-        url,
-        in_scope: inScope ? inScope.split("\n").map((s) => s.trim()).filter(Boolean) : [],
-        out_scope: outScope ? outScope.split("\n").map((s) => s.trim()).filter(Boolean) : [],
-        instructions,
-      });
-      const es = streamRecon(recon_id);
-      reconSSE.current = es;
-      const ts = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
-      es.addEventListener("subdomain", (e) => { const d = JSON.parse(e.data); setSubdomains((p) => [...p, d]); setReconLogs((p) => [...p, { t: ts(), m: `Subdomain: ${d.hostname} \u2192 ${d.ip}` }]); });
-      es.addEventListener("port", (e) => { const d = JSON.parse(e.data); setPorts((p) => [...p, d]); setReconLogs((p) => [...p, { t: ts(), m: `Port open: ${d.host}:${d.port} (${d.service})` }]); });
-      es.addEventListener("technology", (e) => { const d = JSON.parse(e.data); setTechnologies((p) => p.includes(d.tech) ? p : [...p, d.tech]); });
-      es.addEventListener("status", (e) => { const d = JSON.parse(e.data); setReconLogs((p) => [...p, { t: ts(), m: d.msg }]); });
-      es.addEventListener("done", (event) => {
-        const payload = parseEventData(event.data, {});
-        const status = payload.status || "complete";
-        setReconStatus(status === "failed" ? "failed" : status === "error" ? "error" : "complete");
-        if (status !== "complete") {
-          setReconLogs((p) => [...p, { t: ts(), m: `Discovery ended with status: ${status}` }]);
-        }
-        es.close();
-      });
-      es.onerror = () => {
-        setReconStatus("error");
-        setReconLogs((p) => [...p, { t: ts(), m: "Discovery stream error" }]);
-      };
-    } catch (err) {
-      setReconStatus("error");
-      setReconLogs((p) => [...p, { t: new Date().toLocaleTimeString("en-GB", { hour12: false }), m: `Error: ${err.message}` }]);
-    }
-  };
-
-  const proceedToSelect = () => { setSelectedAssets(assets.map((a) => a.id)); setStep(3); };
-  const toggleAsset = (id) => setSelectedAssets((p) => p.includes(id) ? p.filter((a) => a !== id) : [...p, id]);
-  const toggleModule = (id) => setSelectedModules((p) => p.includes(id) ? p.filter((m) => m !== id) : [...p, id]);
-
-  const launchScan = () => {
-    if (!selectedModules.length || !selectedAssets.length) return;
-    const chosen = assets.filter((a) => selectedAssets.includes(a.id));
-    const targetUrls = chosen.map((a) => a.url);
-    const scopeHosts = [...new Set(chosen.map((a) => a.host))];
-    onLaunch({
-      url: targetUrls[0] || url,
-      modules: selectedModules,
-      depth,
-      threads: Number(threads),
-      in_scope: scopeHosts,
-      out_scope: outScope ? outScope.split("\n").map((s) => s.trim()).filter(Boolean) : [],
-      instructions,
-      selected_assets: targetUrls,
-    });
-  };
-
-  const stepItems = [{ n: 1, label: "Configure" }, { n: 2, label: "Discover" }, { n: 3, label: "Scan" }];
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div>
-        <div className="page-title">
-          {step === 1 && <>Configure <span className="accent">Target</span></>}
-          {step === 2 && <>Asset <span className="accent">Discovery</span></>}
-          {step === 3 && <>Select &amp; <span className="accent">Scan</span></>}
-        </div>
-        <div className="page-sub">Step {step} of 3</div>
-      </div>
-
-      {/* step indicator */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {stepItems.map(({ n, label }) => (
-          <div key={n} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-              fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 600,
-              background: step >= n ? "rgba(99,235,215,0.2)" : "rgba(255,255,255,0.06)",
-              border: `1px solid ${step >= n ? "rgba(99,235,215,0.4)" : "rgba(255,255,255,0.07)"}`,
-              color: step >= n ? "#63ebd7" : "#475569",
-            }}>{n}</div>
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: step >= n ? "#cbd5e1" : "#475569", letterSpacing: 1 }}>{label}</span>
-            {n < 3 && <div style={{ width: 40, height: 1, background: step > n ? "#63ebd7" : "rgba(255,255,255,0.07)" }} />}
-          </div>
-        ))}
-      </div>
-
-      {/* ── Step 1: Configure Target ── */}
-      {step === 1 && (
-        <>
-          <div className="card card-lit">
-            <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div>
-                <label className="field-label">Target URL / IP</label>
-                <input className="field" placeholder="https://target.example.com or 192.168.1.1" value={url} onChange={(e) => setUrl(e.target.value)} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <label className="field-label">In-Scope Domains (one per line)</label>
-                  <textarea className="field" rows={4} placeholder={"*.example.com\napi.example.com"} value={inScope} onChange={(e) => setInScope(e.target.value)} style={{ resize: "vertical", lineHeight: 1.6 }} />
-                </div>
-                <div>
-                  <label className="field-label">Out-of-Scope Domains (one per line)</label>
-                  <textarea className="field" rows={4} placeholder={"payments.example.com\nthird-party.com"} value={outScope} onChange={(e) => setOutScope(e.target.value)} style={{ resize: "vertical", lineHeight: 1.6 }} />
-                </div>
-              </div>
-              <div>
-                <label className="field-label">Instructions / Notes</label>
-                <textarea className="field" rows={3} placeholder="Special instructions for this scan (e.g. focus areas, auth info, test restrictions)..." value={instructions} onChange={(e) => setInstructions(e.target.value)} style={{ resize: "vertical", lineHeight: 1.6 }} />
-              </div>
-            </div>
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button className="btn btn-solid" onClick={discover} disabled={!url}>Start Discovery &#9654;</button>
-          </div>
-        </>
-      )}
-
-      {/* ── Step 2: Asset Discovery ── */}
-      {step === 2 && (
-        <>
-          <div className={`card ${reconStatus === "running" ? "card-lit" : ""}`}>
-            <div className="card-header">
-              <div className="card-title">Discovery Progress</div>
-              <div className={`status-pill ${reconStatus === "running" ? "active" : ""}`}>
-                <div className={`dot ${reconStatus === "running" ? "cyan" : ""}`} />
-                {reconStatus === "running" ? "SCANNING" : reconStatus === "complete" ? "COMPLETE" : reconStatus === "failed" ? "FAILED" : reconStatus === "error" ? "ERROR" : "IDLE"}
-              </div>
-            </div>
-            <div className="card-body">
-              <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
-                <div className="stat-tile"><div className="stat-num" style={{ color: "#63ebd7", fontSize: 28 }}>{subdomains.length}</div><div className="stat-label">Subdomains</div></div>
-                <div className="stat-tile"><div className="stat-num" style={{ color: "#fbbf24", fontSize: 28 }}>{ports.length}</div><div className="stat-label">Open Ports</div></div>
-                <div className="stat-tile"><div className="stat-num" style={{ color: "#a78bfa", fontSize: 28 }}>{technologies.length}</div><div className="stat-label">Technologies</div></div>
-              </div>
-            </div>
-          </div>
-
-          {subdomains.length > 0 && (
-            <div className="card">
-              <div className="card-header"><div className="card-title">Discovered Subdomains</div></div>
-              <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {subdomains.map((s) => (
-                  <div key={s.hostname} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#63ebd7" }}>{s.hostname}</span>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#475569" }}>{s.ip}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {ports.length > 0 && (
-            <div className="card">
-              <div className="card-header"><div className="card-title">Open Ports</div></div>
-              <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {ports.map((p) => (
-                  <div key={`${p.host}:${p.port}`} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#fbbf24" }}>{p.host}:{p.port}</span>
-                    <span className="chip">{p.service}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {technologies.length > 0 && (
-            <div className="card">
-              <div className="card-header"><div className="card-title">Technologies Detected</div></div>
-              <div className="card-body" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {technologies.map((t) => <span key={t} className="chip" style={{ color: "#a78bfa", borderColor: "rgba(167,139,250,0.25)" }}>{t}</span>)}
-              </div>
-            </div>
-          )}
-
-          <div className="terminal">
-            <div className="terminal-bar">
-              <div className="t-dot" style={{ background: "#ff5f57" }} /><div className="t-dot" style={{ background: "#ffbd2e" }} /><div className="t-dot" style={{ background: "#28ca41" }} />
-              <span style={{ marginLeft: 8, fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", letterSpacing: 1 }}>discovery &middot; output</span>
-            </div>
-            <div className="terminal-body" ref={logRef} style={{ height: 180 }}>
-              {reconLogs.map((l, i) => <div key={i} className="t-line"><span className="t-ts">[{l.t}]</span><span style={{ color: "#63ebd7" }}>{l.m}</span></div>)}
-            </div>
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn btn-ghost" onClick={() => setStep(1)}>&larr; Back</button>
-            <button className="btn btn-solid" onClick={proceedToSelect} disabled={reconStatus === "running"}>
-              {reconStatus === "running" ? "Discovering..." : "Select Assets & Continue \u25B6"}
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* ── Step 3: Select Assets & Modules ── */}
-      {step === 3 && (
-        <>
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title">Discovered Assets ({selectedAssets.length}/{assets.length})</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedAssets(assets.map((a) => a.id))}>Select All</button>
-                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedAssets([])}>Clear</button>
-              </div>
-            </div>
-            <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {assets.map((a) => (
-                <div key={a.id} className={`module-card ${selectedAssets.includes(a.id) ? "on" : ""}`} onClick={() => toggleAsset(a.id)} style={{ cursor: "pointer" }}>
-                  <Toggle on={selectedAssets.includes(a.id)} onChange={() => toggleAsset(a.id)} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "#f1f5f9" }}>{a.label}</div>
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>
-                      {a.service !== "unknown" && a.service !== "resolved" ? a.service.toUpperCase() + " \u00B7 " : ""}{a.ip} &middot; {a.url}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {!assets.length && <div style={{ color: "#475569", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>No assets discovered. Go back and try a different target.</div>}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title">Scan Modules ({selectedModules.length}/{availableModules.length})</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedModules([...availableModules])}>Select All</button>
-                <button className="btn btn-ghost" style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSelectedModules([])}>Clear</button>
-              </div>
-            </div>
-            <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {availableModules.map((moduleId) => (
-                <div key={moduleId} className={`module-card ${selectedModules.includes(moduleId) ? "on" : ""}`} onClick={() => toggleModule(moduleId)}>
-                  <div style={{ width: 38, height: 38, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>&#128737;&#65039;</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{formatModuleName(moduleId)}</div>
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginTop: 2 }}>{moduleHint(moduleId)}</div>
-                  </div>
-                  <Toggle on={selectedModules.includes(moduleId)} onChange={() => toggleModule(moduleId)} />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-header"><div className="card-title">Parameters</div></div>
-            <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div><label className="field-label">Scan Depth</label><select className="field" value={depth} onChange={(e) => setDepth(e.target.value)}><option value="light">Light</option><option value="medium">Medium</option><option value="deep">Deep</option></select></div>
-              <div><label className="field-label">Worker Threads</label><select className="field" value={threads} onChange={(e) => setThreads(e.target.value)}>{["1", "2", "4", "8", "16"].map((t) => <option key={t}>{t}</option>)}</select></div>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn btn-ghost" onClick={() => setStep(2)}>&larr; Back</button>
-            <button className="btn btn-solid" onClick={launchScan} disabled={!selectedModules.length || !selectedAssets.length}>Launch Scan &#9654;</button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function LivePage({ running, progress, logs }) {
-  const ref = useRef(null);
-  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [logs]);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div><div className="page-title">Live <span className="accent">Scanner</span></div><div className="page-sub">Real-time scan telemetry</div></div>
-        <div className={`status-pill ${running ? "active" : ""}`}><div className={`dot ${running ? "cyan" : ""}`} />{running ? "SCANNING" : progress === 100 ? "COMPLETE" : "IDLE"}</div>
-      </div>
-
-      <div className={`card ${running || progress > 0 ? "card-lit" : ""}`}><div className="card-body">
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#475569" }}>{running ? "Scanning..." : progress === 100 ? "Scan complete" : "Awaiting target"}</span>
-          <span style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, fontWeight: 800, color: "#63ebd7" }}>{progress}%</span>
-        </div>
-        <div className="progress-track" style={{ height: 6, borderRadius: 3 }}><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
-      </div></div>
-
-      <div className="terminal">
-        <div className="terminal-bar">
-          <div className="t-dot" style={{ background: "#ff5f57" }} /><div className="t-dot" style={{ background: "#ffbd2e" }} /><div className="t-dot" style={{ background: "#28ca41" }} />
-          <span style={{ marginLeft: 8, fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", letterSpacing: 1 }}>agent-hunter · output</span>
-        </div>
-        <div className="terminal-body" ref={ref}>
-          {logs.map((l, i) => <div key={`${l.t}-${i}`} className="t-line"><span className="t-ts">[{l.t}]</span><span style={{ color: l.c }}>{l.m}</span></div>)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FindingsPage({ findings }) {
-  const [catF, setCatF] = useState("all");
-  const [sevF, setSevF] = useState("all");
-  const [sel, setSel] = useState(null);
-  const cats = ["all", "web", "network", "sast", "dependency"];
-  const sevs = ["all", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
-  const filtered = findings.filter((f) => (catF === "all" || f.cat.includes(catF)) && (sevF === "all" || f.sev === sevF));
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div><div className="page-title">Findings <span className="accent">Report</span></div><div className="page-sub">{filtered.length} of {findings.length} findings shown</div></div>
-        <button
-          className="btn btn-ghost"
-          onClick={() => {
-            const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = "findings.json";
-            a.click();
-            URL.revokeObjectURL(a.href);
-          }}
-        >
-          ⬇ Export JSON
-        </button>
-      </div>
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <div className="tab-filter" style={{ borderBottom: "none", padding: 0, gap: 4 }}>
-          {cats.map((c) => <button key={c} className={`tab-btn ${catF === c ? "active" : ""}`} style={{ padding: "7px 12px" }} onClick={() => setCatF(c)}>{c.toUpperCase()}</button>)}
-        </div>
-        <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-          {sevs.map((s) => <button key={s} className={`btn ${sevF === s ? "btn-solid" : "btn-ghost"}`} style={{ padding: "5px 10px", fontSize: 10 }} onClick={() => setSevF(s)}>{s}</button>)}
-        </div>
-      </div>
-
-      <div className="card">
-        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 80px 100px", gap: 12, padding: "10px 22px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-          {["Severity", "Finding", "Category", "CVE / CWE"].map((h) => <span key={h} style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, letterSpacing: 2, textTransform: "uppercase", color: "#475569" }}>{h}</span>)}
-        </div>
-        {filtered.map((f) => (
-          <div key={f.id} className={`finding-row ${sel?.id === f.id ? "selected" : ""}`} onClick={() => setSel(sel?.id === f.id ? null : f)}>
-            <Badge s={f.sev} />
-            <div><div className="find-name">{f.type}</div><div className="find-loc">{f.loc}</div></div>
-            <span className="chip">{f.cat}</span>
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#a78bfa" }}>{f.cve}</span>
-          </div>
-        ))}
-      </div>
-
-      {sel && (
-        <div className="detail-panel">
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><Badge s={sel.sev} /><span className="chip">{sel.cat}</span><span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", marginLeft: "auto" }}>{sel.ts}</span></div>
-          <div className="detail-title">{sel.type}</div>
-          <div className="detail-desc" style={{ marginBottom: 12 }}>{sel.desc}</div>
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#63ebd7", marginBottom: 4 }}>Where Found</div>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#cbd5e1", lineHeight: 1.7 }}>{sel.where}</div>
-          </div>
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#63ebd7", marginBottom: 4 }}>How Found</div>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#cbd5e1", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{sel.how}</div>
-          </div>
-          <div>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#63ebd7", marginBottom: 4 }}>Remediation</div>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#cbd5e1", lineHeight: 1.7 }}>{sel.remediation}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SettingsPage({ config, onSave }) {
-  const [cfg, setCfg] = useState(config);
-  useEffect(() => setCfg(config), [config]);
-  const set = (k, v) => setCfg((p) => ({ ...p, [k]: v }));
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div><div className="page-title">Agent <span className="accent">Settings</span></div><div className="page-sub">Configure scanner behaviour and preferences</div></div>
-      <div className="card">
-        <div className="card-header"><div className="card-title">Request Configuration</div></div>
-        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          {[{ k: "timeout", label: "Timeout (seconds)" }, { k: "rateLimit", label: "Rate limit (req/s)" }, { k: "userAgent", label: "User-Agent string", span: 2 }, { k: "proxy", label: "Proxy URL (optional)", span: 2 }, { k: "outputDir", label: "Output directory", span: 2 }].map(({ k, label, span }) => (
-            <div key={k} style={{ gridColumn: span ? `span ${span}` : "span 1" }}><label className="field-label">{label}</label><input className="field" value={cfg[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></div>
-          ))}
-        </div>
-      </div>
-      <div className="card">
-        <div className="card-header"><div className="card-title">Behaviour</div></div>
-        <div className="card-body">
-          {[{ k: "autoReport", name: "Auto-generate report", desc: "Save report after every scan" }, { k: "verifySsl", name: "Verify SSL certificates", desc: "Reject invalid TLS certs" }, { k: "followRedirects", name: "Follow redirects", desc: "Auto-follow HTTP 3xx" }, { k: "saveLogs", name: "Persist terminal logs", desc: "Write logs to output directory" }].map(({ k, name, desc }) => (
-            <div key={k} className="setting-row"><div><div className="setting-name">{name}</div><div className="setting-desc">{desc}</div></div><Toggle on={!!cfg[k]} onChange={(v) => set(k, v)} /></div>
-          ))}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-        <button className="btn btn-danger" onClick={() => setCfg({ ...DEFAULT_SETTINGS })}>Reset defaults</button>
-        <button className="btn btn-solid" onClick={() => onSave(cfg)}>Save settings</button>
-      </div>
-    </div>
-  );
-}
-
-export default function AgentHunter() {
-  const [page, setPage] = useState("dashboard");
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [logs, setLogs] = useState([]);
-  const [findings, setFindings] = useState([]);
+  /* ── App state ── */
   const [scanTarget, setScanTarget] = useState("");
-  const [scanId, setScanId] = useState(null);
+  const [selectedAssets, setSelectedAssets] = useState([]);
   const [availableModules, setAvailableModules] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const sseRef = useRef(null);
 
+  /* ── Scan stream hook ── */
+  const {
+    logs,
+    findings,
+    progress,
+    phase,
+    running,
+    error: streamError,
+    scanId,
+    launch: launchStream,
+    resume: resumeStream,
+    reset: resetStream,
+  } = useScanStream();
+
+  /* ── Initial data fetch + auto-reconnect ── */
   useEffect(() => {
     let mounted = true;
-    Promise.all([
-      listScans().catch(() => []),
-      getSettings().catch(() => DEFAULT_SETTINGS),
-      listModules().catch(() => []),
-    ]).then(([scans, cfg, modules]) => {
+
+    async function init() {
+      // 1. Load basic app data
+      const [scans, cfg, modules] = await Promise.all([
+        listScans().catch(() => []),
+        getSettings().catch(() => DEFAULT_SETTINGS),
+        listModules().catch(() => []),
+      ]);
+
       if (!mounted) return;
       setSettings(toUiSettings(cfg));
       setAvailableModules(Array.isArray(modules) ? modules : []);
+
+      // 2. Check for active/recent scans to auto-reconnect
+      try {
+        const activeScan = await getActiveScan();
+
+        if (!mounted) return;
+
+        if (activeScan.active) {
+          // There's a running scan — reconnect to it
+          setScanTarget(activeScan.target || "");
+          setScreen(SCREEN.LIVE);
+          resumeStream(activeScan.scan_id);
+          setInitializing(false);
+          return;
+        }
+
+        if (activeScan.recent && activeScan.status === "complete") {
+          // Recently completed scan — jump to report
+          setScanTarget(activeScan.target || "");
+          // Hydrate findings from the completed scan
+          try {
+            const scanData = await getScan(activeScan.scan_id);
+            if (scanData && Array.isArray(scanData.findings) && scanData.findings.length > 0) {
+              // Resume will hydrate all findings
+              resumeStream(activeScan.scan_id);
+              setScreen(SCREEN.REPORT);
+              setInitializing(false);
+              return;
+            }
+          } catch { /* fall through */ }
+        }
+      } catch {
+        // Backend might not be running yet — check localStorage fallback
+        const persisted = getPersistedScan();
+        if (persisted && persisted.scanId) {
+          if (!mounted) return;
+          setScanTarget(persisted.target || "");
+          setScreen(SCREEN.LIVE);
+          resumeStream(persisted.scanId);
+          setInitializing(false);
+          return;
+        }
+      }
+
+      // 3. No active scan — normal startup
       if (Array.isArray(scans) && scans.length) {
-        const latest = scans[scans.length - 1];
-        setScanTarget(latest.target || "");
+        setScanTarget(scans[scans.length - 1].target || "");
       }
-    });
+      setInitializing(false);
+    }
+
+    init();
     return () => { mounted = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Flow handlers ── */
+  const handleTargetSubmit = useCallback((target) => {
+    setScanTarget(target);
+    setScreen(SCREEN.ASSETS);
   }, []);
 
-  useEffect(() => () => sseRef.current?.close(), []);
-
-  const launch = useCallback(async ({ url, modules, depth, threads, in_scope, out_scope, instructions, selected_assets }) => {
-    sseRef.current?.close();
-    setRunning(true);
-    setProgress(0);
-    setLogs([]);
-    setFindings([]);
-    setScanTarget(url);
-    setPage("live");
-
-    const started = await apiStartScan({
-      url,
-      modules,
-      depth,
-      threads,
-      in_scope: in_scope || [],
-      out_scope: out_scope || [],
-      instructions: instructions || "",
-      selected_assets: selected_assets || [],
-      verify_ssl: !!settings.verifySsl,
-    });
-
-    setScanId(started.scan_id);
-
-    const es = streamScan(started.scan_id);
-    sseRef.current = es;
-    let pollTimer = null;
-    const ts = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
-    const stopPolling = () => {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
-    };
-    const handleScanError = (payload) => {
-      const data = typeof payload === "string"
-        ? parseEventData(payload, { errors: [payload] })
-        : payload;
-      const errors = Array.isArray(data.errors) ? data.errors : [data.error || data.msg || "Scan error"];
-      setLogs((prev) => [
-        ...prev,
-        ...errors.filter(Boolean).map((msg) => ({ t: ts(), c: "#f87171", m: msg })),
-      ]);
-      setRunning(false);
-      stopPolling();
-    };
-
-    // Fallback sync loop: keeps UI updated even if SSE events are missed.
-    pollTimer = setInterval(async () => {
-      try {
-        const snapshot = await getScan(started.scan_id);
-        if (Array.isArray(snapshot.findings)) {
-          setFindings(snapshot.findings.map(normalizeFinding));
-        }
-        if (snapshot.phase) {
-          setProgress(PHASE_PROGRESS[snapshot.phase] ?? 0);
-        }
-        if (["complete", "error", "aborted"].includes(snapshot.status)) {
-          if (snapshot.status === "complete") {
-            setProgress(100);
-          }
-          setRunning(false);
-          stopPolling();
-          es.close();
-        }
-      } catch {
-        // Best effort sync only.
-      }
-    }, 3000);
-
-    es.addEventListener("log", (ev) => {
-      const d = JSON.parse(ev.data);
-      setLogs((prev) => [...prev, { t: d.ts || ts(), c: toHexColor(d.msg), m: d.msg }]);
-    });
-
-    es.addEventListener("finding", (ev) => {
-      const f = normalizeFinding(JSON.parse(ev.data), findings.length);
-      setFindings((prev) => [...prev, f]);
-    });
-
-    es.addEventListener("phase", (ev) => {
-      const { phase } = JSON.parse(ev.data);
-      setProgress(PHASE_PROGRESS[phase] ?? 0);
-    });
-
-    es.addEventListener("status", (ev) => {
-      const { status } = JSON.parse(ev.data);
-      if (status === "complete") {
-        setRunning(false);
-      } else if (status === "error" || status === "aborted") {
-        setRunning(false);
-      }
-    });
-
-    es.addEventListener("scan_error", (ev) => {
-      handleScanError(ev.data);
-    });
-
-    es.addEventListener("done", async (ev) => {
-      const done = parseEventData(ev.data, {});
-      try {
-        const finalScan = await getScan(started.scan_id);
-        setFindings((finalScan.findings || []).map(normalizeFinding));
-      } catch {
-        // Best effort sync only.
-      }
-      if ((done.status || "complete") === "complete") {
-        setProgress(100);
-      }
-      setRunning(false);
-      stopPolling();
-      es.close();
-    });
-
-    es.onerror = () => {
-      handleScanError({ errors: ["Scan stream disconnected"] });
-    };
-  }, [settings.verifySsl, findings.length]);
-
-  const saveAllSettings = useCallback(async (cfg) => {
-    const payload = {
-      timeout: Number(cfg.timeout) || 30,
-      user_agent: cfg.userAgent,
-      rate_limit: Number(cfg.rateLimit) || 10,
-      proxy: cfg.proxy || "",
-      output_dir: cfg.outputDir || "./results",
-      auto_report: !!cfg.autoReport,
-      verify_ssl: !!cfg.verifySsl,
-      follow_redirects: !!cfg.followRedirects,
-      save_logs: !!cfg.saveLogs,
-    };
-    const saved = await saveSettings(payload);
-    setSettings(toUiSettings(saved));
+  const handleAssetsSelected = useCallback((assets) => {
+    setSelectedAssets(assets);
+    setScreen(SCREEN.CONFIG);
   }, []);
 
-  const criticalCount = findings.filter((f) => f.sev === "CRITICAL").length;
+  const handleLaunchScan = useCallback(async ({ modules, depth, threads, assets }) => {
+    setScreen(SCREEN.LIVE);
+    try {
+      const targetUrls = assets.map((a) => a.url).filter(Boolean);
+      const scopeHosts = [...new Set(assets.map((a) => a.host || a.hostname).filter(Boolean))];
 
-  const NAV = [
-    { id: "dashboard", icon: "⬡", label: "Dashboard" },
-    { id: "scan", icon: "◎", label: "New Scan" },
-    { id: "live", icon: "◈", label: "Live Scan", pulse: running },
-    { id: "findings", icon: "◇", label: "Findings", count: criticalCount },
-    { id: "settings", icon: "◉", label: "Settings" },
-  ];
+      const started = await apiStartScan({
+        url: targetUrls[0] || scanTarget,
+        modules,
+        depth,
+        threads,
+        in_scope: scopeHosts,
+        out_scope: [],
+        instructions: "",
+        selected_assets: targetUrls,
+        verify_ssl: !!settings.verifySsl,
+      });
 
-  return (
-    <>
-      <style>{CSS}</style>
-      <div className="aurora" />
-      <div className="shell">
+      launchStream(started.scan_id, targetUrls[0] || scanTarget);
+    } catch (err) {
+      console.error("Failed to start scan:", err);
+    }
+  }, [scanTarget, settings.verifySsl, launchStream]);
+
+  const handleNewScan = useCallback(() => {
+    resetStream();
+    setScanTarget("");
+    setSelectedAssets([]);
+    setScreen(SCREEN.TARGET);
+  }, [resetStream]);
+
+  const handleViewReport = useCallback(() => {
+    setScreen(SCREEN.REPORT);
+  }, []);
+
+  const handlePause = useCallback(() => {
+    // TODO: Wire to POST /api/scan/{id}/pause when backend supports it
+    console.log("Pause requested");
+  }, []);
+
+  const handleAbort = useCallback(() => {
+    // TODO: Wire to POST /api/scan/{id}/abort when backend supports it
+    console.log("Abort requested");
+  }, []);
+
+  // Show loading indicator while checking for active scans
+  if (initializing) {
+    return (
+      <div className="app-shell">
         <header className="topbar">
-          <svg width="30" height="30" viewBox="0 0 30 30" fill="none" style={{ flexShrink: 0 }}>
-            <polygon points="15,2 28,9 28,21 15,28 2,21 2,9" stroke="#63ebd7" strokeWidth="1.5" fill="none" opacity="0.8" />
-            <polygon points="15,7 23,11.5 23,20.5 15,24 7,20.5 7,11.5" stroke="#a78bfa" strokeWidth="1" fill="none" opacity="0.5" />
-            <circle cx="15" cy="15" r="2.5" fill="#63ebd7" />
-          </svg>
-          <div><div className="logo-text">Agent-Hunter</div><div className="logo-sub">Vulnerability Scanner</div></div>
-          <div className="topbar-right">
-            <div className={`status-pill ${running ? "active" : ""}`}><div className={`dot ${running ? "cyan" : ""}`} />{running ? "SCANNING" : "READY"}</div>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#475569", letterSpacing: 1 }}>v2.1.0</div>
+          <div className="topbar-brand">
+            <svg width="24" height="24" viewBox="0 0 30 30" fill="none">
+              <polygon points="15,2 28,9 28,21 15,28 2,21 2,9" stroke="var(--color-primary)" strokeWidth="1.5" fill="none" opacity="0.8" />
+              <polygon points="15,7 23,11.5 23,20.5 15,24 7,20.5 7,11.5" stroke="var(--color-text-low)" strokeWidth="1" fill="none" opacity="0.4" />
+              <circle cx="15" cy="15" r="2.5" fill="var(--color-primary)" />
+            </svg>
+            <span className="topbar-wordmark">Agent-Hunter</span>
           </div>
         </header>
-
-        <nav className="sidebar">
-          <div className="sidebar-section">Navigation</div>
-          {NAV.map(({ id, icon, label, pulse, count }) => (
-            <button key={id} className={`nav-item ${page === id ? "active" : ""}`} onClick={() => setPage(id)}>
-              <span className="nav-icon">{icon}</span>
-              <span style={{ flex: 1 }}>{label}</span>
-              {pulse && <span className="nav-badge" style={{ background: "rgba(99,235,215,0.1)", color: "#63ebd7", borderColor: "rgba(99,235,215,0.2)" }}>●</span>}
-              {count > 0 && !pulse && <span className="nav-badge">{count}</span>}
-            </button>
-          ))}
-          <div className="sidebar-footer">
-            <div>Total findings · {findings.length}</div>
-            <div style={{ color: "#f87171", marginTop: 2 }}>Critical · {criticalCount}</div>
+        <div className="main-content" style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "60vh",
+        }}>
+          <div className="anim-pulse-ring" style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "16px",
+          }}>
+            <div style={{
+              width: "48px",
+              height: "48px",
+              borderRadius: "50%",
+              border: "3px solid var(--color-border)",
+              borderTopColor: "var(--color-primary)",
+              animation: "spin 0.8s linear infinite",
+            }} />
+            <span style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-sm)",
+              color: "var(--color-text-low)",
+              letterSpacing: "0.5px",
+            }}>
+              Checking for active scans...
+            </span>
           </div>
-        </nav>
-
-        <main className="main">
-          {page === "dashboard" && <Dashboard onNavigate={setPage} scanning={running} findings={findings} scanTarget={scanTarget} />}
-          {page === "scan" && <ScanPage onLaunch={launch} availableModules={availableModules} />}
-          {page === "live" && <LivePage running={running} progress={progress} logs={logs} />}
-          {page === "findings" && <FindingsPage findings={findings} />}
-          {page === "settings" && <SettingsPage config={settings} onSave={saveAllSettings} />}
-        </main>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
-    </>
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      {/* ── Top Nav Bar ── */}
+      <header className="topbar">
+        <div className="topbar-brand">
+          <svg width="24" height="24" viewBox="0 0 30 30" fill="none">
+            <polygon points="15,2 28,9 28,21 15,28 2,21 2,9" stroke="var(--color-primary)" strokeWidth="1.5" fill="none" opacity="0.8" />
+            <polygon points="15,7 23,11.5 23,20.5 15,24 7,20.5 7,11.5" stroke="var(--color-text-low)" strokeWidth="1" fill="none" opacity="0.4" />
+            <circle cx="15" cy="15" r="2.5" fill="var(--color-primary)" />
+          </svg>
+          <span className="topbar-wordmark">Agent-Hunter</span>
+        </div>
+
+        {screen !== SCREEN.TARGET && (
+          <span className="topbar-breadcrumb">{SCREEN_LABELS[screen]}</span>
+        )}
+
+        <div className="topbar-right">
+          {running && (
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "4px 12px",
+              borderRadius: "100px",
+              border: "1px solid var(--color-primary)",
+              background: "var(--color-primary-glow)",
+            }}>
+              <div className="anim-pulse-ring" style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "var(--color-primary)",
+              }} />
+              <span style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-primary)",
+                letterSpacing: "0.5px",
+              }}>
+                SCANNING
+              </span>
+            </div>
+          )}
+          {streamError && (
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "4px 12px",
+              borderRadius: "100px",
+              border: "1px solid var(--color-accent)",
+              background: "var(--color-accent-glow, rgba(255,160,0,0.08))",
+              marginLeft: "8px",
+            }}>
+              <span style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "10px",
+                color: "var(--color-accent)",
+                letterSpacing: "0.3px",
+              }}>
+                RECONNECTING...
+              </span>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* ── Main Content ── */}
+      <div className="main-content">
+        {screen === SCREEN.TARGET && (
+          <TargetInput onSubmit={handleTargetSubmit} />
+        )}
+        {screen === SCREEN.ASSETS && (
+          <AssetDiscovery
+            target={scanTarget}
+            onContinue={handleAssetsSelected}
+            onBack={() => setScreen(SCREEN.TARGET)}
+          />
+        )}
+        {screen === SCREEN.CONFIG && (
+          <ScanConfig
+            selectedAssets={selectedAssets}
+            availableModules={availableModules}
+            onLaunch={handleLaunchScan}
+            onBack={() => setScreen(SCREEN.ASSETS)}
+          />
+        )}
+        {screen === SCREEN.LIVE && (
+          <LiveConsole
+            running={running}
+            progress={progress}
+            phase={phase}
+            logs={logs}
+            findings={findings}
+            scanTarget={scanTarget}
+            scanId={scanId}
+            onPause={handlePause}
+            onAbort={handleAbort}
+            onViewReport={handleViewReport}
+          />
+        )}
+        {screen === SCREEN.REPORT && (
+          <ReportView
+            findings={findings}
+            scanTarget={scanTarget}
+            scanId={scanId}
+            scanDuration=""
+            scanDate={new Date().toLocaleDateString()}
+            scannerCount={availableModules.length}
+            onNewScan={handleNewScan}
+          />
+        )}
+      </div>
+    </div>
   );
 }

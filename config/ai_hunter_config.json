@@ -64,12 +64,14 @@
           "prompt_template": "Tech stack: {{TECHNOLOGIES}}\nURLs: {{URL_COUNT}}\nPrevious results: {{MEMORY_CTX}}\nPrioritize scanner modules. Output JSON."
         },
         "3_scanning": {
-          "description": "Parallel vulnerability scanning with 17 scanner modules",
+          "description": "Parallel vulnerability scanning with expanded advanced scanner modules",
           "tools": ["sql_injection", "xss_scanner", "ssrf", "ssti", "command_injection",
                     "xxe_scanner", "crlf_injection", "graphql_scanner",
-                    "auth_scanner", "csrf_scanner", "race_condition", "idor_scanner",
-                    "path_traversal", "misconfig_scanner", "host_header",
-                    "open_redirect", "subdomain_takeover"],
+                    "auth_scanner", "jwt_scanner", "rate_limit_scanner",
+                    "csrf_scanner", "race_condition", "idor_scanner", "broken_access_control",
+                    "path_traversal", "lfi_rfi_scanner",
+                    "misconfig_scanner", "header_security", "cors_scanner", "sensitive_data_exposure", "host_header",
+                    "open_redirect", "subdomain_takeover", "ssl_tls_scanner"],
           "ollama_task": "Learn from scan results for future strategy",
           "endpoint": "/api/generate"
         },

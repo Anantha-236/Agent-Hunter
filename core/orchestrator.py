@@ -45,11 +45,19 @@ SCANNER_REGISTRY = {
     "xss_scanner":         ("scanners.xss.xss_scanner",             "XSSScanner"),
     "ssrf":                ("scanners.ssrf.ssrf_scanner",            "SSRFScanner"),
     "auth_scanner":        ("scanners.auth.auth_scanner",            "AuthScanner"),
+    "jwt_scanner":         ("scanners.auth.jwt_scanner",             "JWTScanner"),
+    "rate_limit_scanner":  ("scanners.auth.rate_limit_scanner",      "RateLimitScanner"),
     "idor_scanner":        ("scanners.authz.idor_scanner",           "IDORScanner"),
+    "broken_access_control": ("scanners.authz.broken_access_control", "BrokenAccessControlScanner"),
     "path_traversal":      ("scanners.file.path_traversal",          "PathTraversalScanner"),
+    "lfi_rfi_scanner":     ("scanners.file.lfi_rfi_scanner",         "LFIRFIScanner"),
     "misconfig_scanner":   ("scanners.misconfig.misconfig_scanner",  "MisconfigScanner"),
+    "cors_scanner":        ("scanners.misconfig.cors_scanner",       "CORSScanner"),
+    "header_security":     ("scanners.misconfig.header_security",    "HeaderSecurityScanner"),
+    "sensitive_data_exposure": ("scanners.misconfig.sensitive_data_exposure", "SensitiveDataExposureScanner"),
     "open_redirect":       ("scanners.redirect.open_redirect",       "OpenRedirectScanner"),
     "subdomain_takeover":  ("scanners.recon.subdomain_takeover",     "SubdomainTakeoverScanner"),
+    "ssl_tls_scanner":     ("scanners.recon.ssl_tls_scanner",        "SSLTLSScanner"),
     "csrf_scanner":        ("scanners.auth.csrf_scanner",            "CSRFScanner"),
     "host_header":         ("scanners.misconfig.host_header",        "HostHeaderScanner"),
     "xxe_scanner":         ("scanners.injection.xxe_scanner",        "XXEScanner"),
@@ -456,6 +464,10 @@ class Orchestrator:
         if self.policy_enforcer and self.policy_enforcer.should_filter_cloud_payloads():
             state.target.metadata["filter_cloud_payloads"] = True
             state.log_thought("Pre-engagement: cloud-metadata payloads will be filtered")
+
+        if self.policy_enforcer and self.policy_enforcer.should_disable_bruteforce():
+            state.target.metadata["disable_bruteforce"] = True
+            state.log_thought("Pre-engagement: brute-force style checks will be limited/disabled")
 
     def _confirm_scan(self, result: PreEngagementResult, state: ScanState) -> bool:
         """

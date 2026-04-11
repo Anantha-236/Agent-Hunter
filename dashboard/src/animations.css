@@ -1,0 +1,108 @@
+/* ================================================================
+   ANIMATIONS
+   animations.css — All @keyframes isolated here
+   ================================================================ */
+
+/* ── fadeIn ── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.anim-fade-in {
+  animation: fadeIn calc(200ms * var(--anim-speed, 1)) ease-out both;
+}
+
+/* ── slideUp ── */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.anim-slide-up {
+  animation: slideUp calc(220ms * var(--anim-speed, 1)) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── Stagger helper — applied via nth-child ── */
+.stagger-item:nth-child(1)  { animation-delay: calc(0ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(2)  { animation-delay: calc(60ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(3)  { animation-delay: calc(120ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(4)  { animation-delay: calc(180ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(5)  { animation-delay: calc(240ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(6)  { animation-delay: calc(300ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(7)  { animation-delay: calc(360ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(8)  { animation-delay: calc(420ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(9)  { animation-delay: calc(480ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(10) { animation-delay: calc(540ms * var(--anim-speed, 1)); }
+.stagger-item:nth-child(n+11) { animation-delay: calc(600ms * var(--anim-speed, 1)); }
+
+/* ── terminalLine ── */
+@keyframes terminalLine {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.anim-terminal-line {
+  animation: terminalLine calc(100ms * var(--anim-speed, 1)) ease-out both;
+}
+
+/* ── pulseRing — scanning status indicator ── */
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0 var(--color-accent-glow); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.anim-pulse-ring {
+  animation: pulseRing calc(1800ms * var(--anim-speed, 1)) ease-out infinite;
+}
+
+/* ── progressShimmer — active progress bar ── */
+@keyframes progressShimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.anim-progress-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-primary) 0%,
+    var(--color-primary-dim) 40%,
+    var(--color-primary) 60%,
+    var(--color-primary-dim) 100%
+  );
+  background-size: 200% 100%;
+  animation: progressShimmer calc(2000ms * var(--anim-speed, 1)) linear infinite;
+}
+
+/* ── Screen transition ── */
+@keyframes screenEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.screen-enter {
+  animation: screenEnter calc(200ms * var(--anim-speed, 1)) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── countUp glow — brief highlight when number changes ── */
+@keyframes countGlow {
+  0%   { text-shadow: 0 0 12px currentColor; }
+  100% { text-shadow: none; }
+}
+
+.anim-count-glow {
+  animation: countGlow calc(600ms * var(--anim-speed, 1)) ease-out;
+}

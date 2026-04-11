@@ -1,57 +1,71 @@
 {
-  "scan_id": "29ddfc06-df3e-4622-84a3-517c0f3fdc00",
-  "phase": "scan",
+  "scan_id": "de1b9bb6-cae3-4f23-8b9f-a29f68056bd5",
+  "phase": "failed",
   "resume_phase": "scan",
-  "target_url": "http://testphp.vulnweb.com",
+  "target_url": "10.123.55.99",
   "modules_run": [
-    "sql_injection",
-    "xss_scanner",
-    "misconfig_scanner"
+    "sensitive_data_exposure"
   ],
-  "modules_pending": [],
-  "findings_count": 10,
-  "errors": [],
+  "modules_pending": [
+    "crlf_injection",
+    "jwt_scanner",
+    "rate_limit_scanner",
+    "broken_access_control",
+    "lfi_rfi_scanner",
+    "cors_scanner",
+    "ssl_tls_scanner",
+    "header_security",
+    "command_injection",
+    "xxe_scanner",
+    "ssrf",
+    "graphql_scanner",
+    "auth_scanner",
+    "idor_scanner",
+    "csrf_scanner",
+    "race_condition",
+    "path_traversal",
+    "host_header",
+    "open_redirect",
+    "subdomain_takeover",
+    "xss_scanner",
+    "misconfig_scanner",
+    "ssti",
+    "sql_injection"
+  ],
+  "findings_count": 0,
+  "findings": [],
+  "discovered_urls": [
+    "10.123.55.99"
+  ],
+  "discovered_params": {},
+  "technologies": [],
+  "errors": [
+    "sensitive_data_exposure: list index out of range",
+    "list index out of range"
+  ],
   "thoughts": [
-    "[08:28:45] Scan started",
-    "[08:28:45] Scope defined: 2 in-scope asset(s). Hunter will respect these boundaries throughout the scan.",
-    "[08:28:45] Responsibility framework active: Hunter will (1) stay in scope, (2) understand what it finds, (3) escalate criticals immediately, (4) learn from results.",
-    "[08:28:45] Applying 6 prior lesson(s) from past scans.",
-    "[08:28:45]   Past lesson: Module 'graphql_scanner' found nothing on tech stack [unknown] (ran for 66s). Consider deprioritizing this module for th",
-    "[08:28:45]   Past lesson: Module 'host_header' found nothing on tech stack [unknown] (ran for 17s). Consider deprioritizing this module for this t",
-    "[08:28:45] Running pre-engagement gate checks",
-    "[08:28:45] No policy/checklist configured \u2014 skipping pre-engagement gate",
-    "[08:28:45] Starting reconnaissance",
-    "[08:28:46] Technologies: []",
-    "[08:28:50] No WAF detected",
-    "[08:29:01] Crawled 27 URLs",
-    "[08:29:32] RL update: sql_injection raw=-0.30 shaped=-1.44 [wrong_confident=1] | backend=deep | strategy=hybrid | replay=35 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23",
-    "[08:29:32] RESPONSIBILITY [CONTINUE] Trigger: finding:sql_injection_error | Reason: Low-impact finding 'SQL Injection (Error-based) \u2014 test'. Include in report and continue scanning.",
-    "[08:29:32] CONSEQUENCE [SQL_INJECTION_ERROR / CRITICAL]\n  Assets at risk  : database records, user credentials, PII\n  Blast radius    : entire database\n  Exploit chance  : 42%\n  Chain potential : auth_bypass, data_exfiltration, privilege_escalation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:45] RL update: xss_scanner raw=-0.90 shaped=-4.46 [wrong_confident=3] | backend=deep | strategy=hybrid | replay=36 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23",
-    "[08:29:45] RESPONSIBILITY [CONTINUE] Trigger: finding:reflected_xss | Reason: Low-impact finding 'Reflected XSS in 'pp''. Include in report and continue scanning.",
-    "[08:29:45] CONSEQUENCE [REFLECTED_XSS / HIGH]\n  Assets at risk  : session cookies, user credentials, user actions\n  Blast radius    : all users visiting affected pages\n  Exploit chance  : 35%\n  Chain potential : session_hijacking, credential_theft, phishing\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:45] RESPONSIBILITY [CONTINUE] Trigger: finding:reflected_xss | Reason: Low-impact finding 'Reflected XSS in 'p''. Include in report and continue scanning.",
-    "[08:29:45] CONSEQUENCE [REFLECTED_XSS / HIGH]\n  Assets at risk  : session cookies, user credentials, user actions\n  Blast radius    : all users visiting affected pages\n  Exploit chance  : 35%\n  Chain potential : session_hijacking, credential_theft, phishing\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:45] RESPONSIBILITY [CONTINUE] Trigger: finding:reflected_xss | Reason: Low-impact finding 'Reflected XSS in 'pp''. Include in report and continue scanning.",
-    "[08:29:45] CONSEQUENCE [REFLECTED_XSS / HIGH]\n  Assets at risk  : session cookies, user credentials, user actions\n  Blast radius    : all users visiting affected pages\n  Exploit chance  : 35%\n  Chain potential : session_hijacking, credential_theft, phishing\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] RL update: misconfig_scanner raw=-1.80 shaped=-8.94 [wrong_confident=6] | backend=deep | strategy=hybrid | replay=37 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23",
-    "[08:29:52] RESPONSIBILITY [CONTINUE] Trigger: finding:missing_security_header | Reason: Low-impact finding 'Missing HSTS'. Include in report and continue scanning.",
-    "[08:29:52] CONSEQUENCE [MISSING_SECURITY_HEADER / LOW]\n  Assets at risk  : server configuration, debug interfaces, admin panels\n  Blast radius    : depends on exposed functionality\n  Exploit chance  : 30%\n  Chain potential : information_disclosure, admin_access, further_exploitation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] RESPONSIBILITY [CONTINUE] Trigger: finding:missing_security_header | Reason: Low-impact finding 'Missing CSP'. Include in report and continue scanning.",
-    "[08:29:52] CONSEQUENCE [MISSING_SECURITY_HEADER / LOW]\n  Assets at risk  : server configuration, debug interfaces, admin panels\n  Blast radius    : depends on exposed functionality\n  Exploit chance  : 30%\n  Chain potential : information_disclosure, admin_access, further_exploitation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] RESPONSIBILITY [CONTINUE] Trigger: finding:missing_security_header | Reason: Low-impact finding 'Missing X-Frame-Options (Clickjacking)'. Include in report and continue scanning.",
-    "[08:29:52] CONSEQUENCE [MISSING_SECURITY_HEADER / LOW]\n  Assets at risk  : server configuration, debug interfaces, admin panels\n  Blast radius    : depends on exposed functionality\n  Exploit chance  : 30%\n  Chain potential : information_disclosure, admin_access, further_exploitation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] RESPONSIBILITY [CONTINUE] Trigger: finding:missing_security_header | Reason: Low-impact finding 'Missing X-Content-Type-Options'. Include in report and continue scanning.",
-    "[08:29:52] CONSEQUENCE [MISSING_SECURITY_HEADER / LOW]\n  Assets at risk  : server configuration, debug interfaces, admin panels\n  Blast radius    : depends on exposed functionality\n  Exploit chance  : 30%\n  Chain potential : information_disclosure, admin_access, further_exploitation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] RESPONSIBILITY [CONTINUE] Trigger: finding:missing_security_header | Reason: Low-impact finding 'Missing Referrer-Policy'. Include in report and continue scanning.",
-    "[08:29:52] CONSEQUENCE [MISSING_SECURITY_HEADER / LOW]\n  Assets at risk  : server configuration, debug interfaces, admin panels\n  Blast radius    : depends on exposed functionality\n  Exploit chance  : 30%\n  Chain potential : information_disclosure, admin_access, further_exploitation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] RESPONSIBILITY [CONTINUE] Trigger: finding:directory_listing | Reason: Low-impact finding 'Directory Listing Enabled: images/'. Include in report and continue scanning.",
-    "[08:29:52] CONSEQUENCE [DIRECTORY_LISTING / MEDIUM]\n  Assets at risk  : server configuration, debug interfaces, admin panels\n  Blast radius    : depends on exposed functionality\n  Exploit chance  : 30%\n  Chain potential : information_disclosure, admin_access, further_exploitation\n  Action          : Medium or low severity finding. Document evidence and continue scanning remaining modules. Include in final report.\n  Responsibility  : continue",
-    "[08:29:52] Raw findings: 10"
+    "[03:20:48] Scan started",
+    "[03:20:48] Scope defined: 1 in-scope asset(s). Hunter will respect these boundaries throughout the scan.",
+    "[03:20:48] Responsibility framework active: Hunter will (1) stay in scope, (2) understand what it finds, (3) escalate criticals immediately, (4) learn from results.",
+    "[03:20:48] Applying 6 prior lesson(s) from past scans.",
+    "[03:20:48]   Past lesson: Module 'graphql_scanner' found nothing on tech stack [unknown] (ran for 66s). Consider deprioritizing this module for th",
+    "[03:20:48]   Past lesson: Module 'host_header' found nothing on tech stack [unknown] (ran for 17s). Consider deprioritizing this module for this t",
+    "[03:20:48] Running pre-engagement gate checks",
+    "[03:20:48] No policy/checklist configured \u2014 skipping pre-engagement gate",
+    "[03:20:48] Starting reconnaissance",
+    "[03:21:02] No WAF detected",
+    "[03:21:09] Crawled 1 URLs",
+    "[03:21:09] Analysing recon for strategy (Rule Engine \u2192 RL Agent \u2192 LLM helper)",
+    "[03:21:10] HunterMind context applied: 1389 chars of experience",
+    "[03:21:13] Strategy (rules): Default priority order",
+    "[03:21:13] Rule Engine priority: ['sql_injection', 'ssti', 'crlf_injection', 'command_injection', 'xxe_scanner']",
+    "[03:21:13] RL Agent final order: ['crlf_injection', 'jwt_scanner', 'rate_limit_scanner', 'broken_access_control', 'lfi_rfi_scanner']",
+    "[03:21:13] RL policy: backend=deep | strategy=hybrid | replay=39 | top=command_injection:+8.35, crlf_injection:+3.36, csrf_scanner:+3.23, jwt_scanner:+0.00, rate_limit_scanner:+0.00",
+    "[03:21:13] WARNING: 0 discovered params \u2014 injection scanners may return nothing"
   ],
   "reward": {
-    "total_score": -1.5,
-    "action_count": 11,
+    "total_score": -0.5,
+    "action_count": 3,
     "reward_scheme": {
       "successful_exploit": 1.0,
       "correct_service_identification": 0.5,
@@ -70,90 +84,26 @@
         "reward": 0.5,
         "module": "",
         "url": "",
-        "detail": "Discovered 27 URLs",
-        "ts": "2026-03-11T08:29:01.987969+00:00"
+        "detail": "Discovered 1 URLs",
+        "ts": "2026-04-11T03:21:09.884390+00:00"
       },
       {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "sql_injection",
-        "url": "http://testphp.vulnweb.com/search.php?test=query",
-        "detail": "SQL Injection (Error-based) \u2014 test",
-        "ts": "2026-03-11T08:29:32.105328+00:00"
+        "action": "no_progress_action",
+        "reward": 0.0,
+        "module": "sensitive_data_exposure",
+        "url": "",
+        "detail": "",
+        "ts": "2026-04-11T03:21:21.843065+00:00"
       },
       {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "xss_scanner",
-        "url": "http://testphp.vulnweb.com/hpp/params.php?p=valid&pp=12",
-        "detail": "Reflected XSS in 'pp'",
-        "ts": "2026-03-11T08:29:45.356882+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "xss_scanner",
-        "url": "http://testphp.vulnweb.com/hpp/params.php?p=valid&pp=12",
-        "detail": "Reflected XSS in 'p'",
-        "ts": "2026-03-11T08:29:45.356905+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "xss_scanner",
-        "url": "http://testphp.vulnweb.com/hpp/?pp=12",
-        "detail": "Reflected XSS in 'pp'",
-        "ts": "2026-03-11T08:29:45.356910+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "misconfig_scanner",
-        "url": "http://testphp.vulnweb.com",
-        "detail": "Missing HSTS",
-        "ts": "2026-03-11T08:29:52.708288+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "misconfig_scanner",
-        "url": "http://testphp.vulnweb.com",
-        "detail": "Missing CSP",
-        "ts": "2026-03-11T08:29:52.708325+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "misconfig_scanner",
-        "url": "http://testphp.vulnweb.com",
-        "detail": "Missing X-Frame-Options (Clickjacking)",
-        "ts": "2026-03-11T08:29:52.708337+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "misconfig_scanner",
-        "url": "http://testphp.vulnweb.com",
-        "detail": "Missing X-Content-Type-Options",
-        "ts": "2026-03-11T08:29:52.708349+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "misconfig_scanner",
-        "url": "http://testphp.vulnweb.com",
-        "detail": "Missing Referrer-Policy",
-        "ts": "2026-03-11T08:29:52.708359+00:00"
-      },
-      {
-        "action": "redundant_scan",
-        "reward": -0.2,
-        "module": "misconfig_scanner",
-        "url": "http://testphp.vulnweb.com/images/",
-        "detail": "Directory Listing Enabled: images/",
-        "ts": "2026-03-11T08:29:52.708370+00:00"
+        "action": "incorrect_exploit_attempt",
+        "reward": -1.0,
+        "module": "sensitive_data_exposure",
+        "url": "",
+        "detail": "list index out of range",
+        "ts": "2026-04-11T03:21:21.857509+00:00"
       }
     ]
   },
-  "timestamp": "2026-03-11T08:29:52.750247+00:00"
+  "timestamp": "2026-04-11T03:21:21.884569+00:00"
 }

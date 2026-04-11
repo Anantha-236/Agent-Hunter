@@ -1,0 +1,86 @@
+/* ================================================================
+   THEME PRESETS
+   theme.css — 4 data-theme blocks
+   ================================================================ */
+
+/* ── DEFAULT: Void Dark (teal + amber) ── */
+[data-theme="void-dark"],
+:root {
+  --color-primary:        #00C8A0;
+  --color-primary-dim:    #009E7E;
+  --color-primary-glow:   rgba(0,200,160,0.12);
+  --color-accent:         #F0A030;
+  --color-accent-dim:     #C07820;
+  --color-accent-glow:    rgba(240,160,48,0.10);
+  --color-void:           #070A10;
+  --color-base:           #0C1018;
+  --color-surface:        #111827;
+  --color-raised:         #1A2333;
+  --color-border:         #1E2D3D;
+  --color-border-active:  #2A3F55;
+  --color-text-high:      #E2EAF4;
+  --color-text-mid:       #7A8FA8;
+  --color-text-low:       #3A4F63;
+}
+
+/* ── Midnight Blue (blue + cyan) ── */
+[data-theme="midnight-blue"] {
+  --color-primary:        #3B8FE8;
+  --color-primary-dim:    #2A6FBB;
+  --color-primary-glow:   rgba(59,143,232,0.12);
+  --color-accent:         #22D3EE;
+  --color-accent-dim:     #1AA8C0;
+  --color-accent-glow:    rgba(34,211,238,0.10);
+  --color-void:           #060810;
+  --color-base:           #0A0E18;
+  --color-surface:        #0F1525;
+  --color-raised:         #162035;
+  --color-border:         #1A2845;
+  --color-border-active:  #253A5A;
+  --color-text-high:      #E0E8F8;
+  --color-text-mid:       #7088A8;
+  --color-text-low:       #384A62;
+}
+
+/* ── Terminal Green (green + amber) ── */
+[data-theme="terminal-green"] {
+  --color-primary:        #22C06A;
+  --color-primary-dim:    #1A9A55;
+  --color-primary-glow:   rgba(34,192,106,0.12);
+  --color-accent:         #F0A030;
+  --color-accent-dim:     #C07820;
+  --color-accent-glow:    rgba(240,160,48,0.10);
+  --color-void:           #060A08;
+  --color-base:           #0A1210;
+  --color-surface:        #0F1A16;
+  --color-raised:         #162420;
+  --color-border:         #1E3028;
+  --color-border-active:  #2A4038;
+  --color-text-high:      #D8F0E0;
+  --color-text-mid:       #6A9A7A;
+  --color-text-low:       #38584A;
+}
+
+/* ── Light Mode ── */
+[data-theme="light"] {
+  --color-primary:        #00A080;
+  --color-primary-dim:    #008868;
+  --color-primary-glow:   rgba(0,160,128,0.08);
+  --color-accent:         #D08A20;
+  --color-accent-dim:     #B07018;
+  --color-accent-glow:    rgba(208,138,32,0.08);
+  --color-void:           #F4F6F8;
+  --color-base:           #FFFFFF;
+  --color-surface:        #F0F2F5;
+  --color-raised:         #E8ECF0;
+  --color-border:         #D8DEE6;
+  --color-border-active:  #C0CAD4;
+  --color-text-high:      #1A2030;
+  --color-text-mid:       #5A6A7A;
+  --color-text-low:       #8A9AAA;
+  --color-critical:       #CC3030;
+  --color-critical-glow:  rgba(204,48,48,0.08);
+  --color-high:           #D08A20;
+  --color-medium:         #2A70C0;
+  --color-info:           #1A9A55;
+}

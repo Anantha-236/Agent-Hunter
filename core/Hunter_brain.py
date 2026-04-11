@@ -460,21 +460,21 @@ class OllamaClient:
 
 # Tech stack → vulnerability priority mapping
 TECH_VULN_MAP = {
-    "PHP":           ["sql_injection", "path_traversal", "ssti", "misconfig_scanner", "xss_scanner"],
-    "WordPress":     ["sql_injection", "xss_scanner", "auth_scanner", "misconfig_scanner", "path_traversal"],
-    "Laravel":       ["sql_injection", "ssti", "misconfig_scanner", "auth_scanner", "path_traversal"],
-    "Django":        ["ssti", "sql_injection", "misconfig_scanner", "auth_scanner", "idor_scanner"],
-    "Express.js":    ["ssti", "ssrf", "xss_scanner", "idor_scanner", "auth_scanner"],
-    "Next.js":       ["ssrf", "xss_scanner", "auth_scanner", "misconfig_scanner", "open_redirect"],
-    "React":         ["xss_scanner", "auth_scanner", "idor_scanner", "open_redirect"],
-    "ASP.NET":       ["sql_injection", "path_traversal", "auth_scanner", "misconfig_scanner"],
-    "Java EE":       ["sql_injection", "ssti", "ssrf", "path_traversal", "misconfig_scanner"],
-    "Ruby on Rails": ["sql_injection", "ssti", "auth_scanner", "idor_scanner", "misconfig_scanner"],
-    "Apache":        ["path_traversal", "misconfig_scanner", "sql_injection"],
-    "Nginx":         ["misconfig_scanner", "ssrf", "path_traversal"],
-    "Cloudflare":    ["ssrf", "auth_scanner", "idor_scanner"],
-    "GraphQL":       ["sql_injection", "idor_scanner", "auth_scanner", "ssrf"],
-    "Swagger UI":    ["idor_scanner", "auth_scanner", "ssrf", "sql_injection"],
+    "PHP":           ["sql_injection", "path_traversal", "lfi_rfi_scanner", "ssti", "misconfig_scanner", "header_security", "cors_scanner", "sensitive_data_exposure", "xss_scanner"],
+    "WordPress":     ["sql_injection", "xss_scanner", "auth_scanner", "jwt_scanner", "misconfig_scanner", "header_security", "path_traversal", "lfi_rfi_scanner"],
+    "Laravel":       ["sql_injection", "ssti", "misconfig_scanner", "header_security", "auth_scanner", "jwt_scanner", "path_traversal"],
+    "Django":        ["ssti", "sql_injection", "misconfig_scanner", "header_security", "auth_scanner", "jwt_scanner", "idor_scanner", "broken_access_control", "rate_limit_scanner"],
+    "Express.js":    ["ssti", "ssrf", "xss_scanner", "idor_scanner", "broken_access_control", "auth_scanner", "jwt_scanner", "cors_scanner", "rate_limit_scanner"],
+    "Next.js":       ["ssrf", "xss_scanner", "auth_scanner", "jwt_scanner", "cors_scanner", "rate_limit_scanner", "misconfig_scanner", "header_security", "open_redirect"],
+    "React":         ["xss_scanner", "cors_scanner", "auth_scanner", "jwt_scanner", "idor_scanner", "broken_access_control", "open_redirect"],
+    "ASP.NET":       ["sql_injection", "path_traversal", "auth_scanner", "jwt_scanner", "broken_access_control", "misconfig_scanner", "header_security"],
+    "Java EE":       ["sql_injection", "ssti", "ssrf", "path_traversal", "lfi_rfi_scanner", "misconfig_scanner", "header_security"],
+    "Ruby on Rails": ["sql_injection", "ssti", "auth_scanner", "jwt_scanner", "idor_scanner", "broken_access_control", "misconfig_scanner"],
+    "Apache":        ["path_traversal", "lfi_rfi_scanner", "misconfig_scanner", "header_security", "sensitive_data_exposure", "sql_injection", "ssl_tls_scanner"],
+    "Nginx":         ["misconfig_scanner", "header_security", "ssrf", "path_traversal", "sensitive_data_exposure", "ssl_tls_scanner"],
+    "Cloudflare":    ["ssrf", "auth_scanner", "jwt_scanner", "idor_scanner", "broken_access_control", "rate_limit_scanner", "cors_scanner"],
+    "GraphQL":       ["sql_injection", "idor_scanner", "broken_access_control", "auth_scanner", "jwt_scanner", "ssrf"],
+    "Swagger UI":    ["idor_scanner", "broken_access_control", "auth_scanner", "jwt_scanner", "ssrf", "sql_injection"],
 }
 
 # Confidence scoring for finding validation
@@ -525,6 +525,21 @@ VALIDATION_RULES = {
         "confirmed_if": lambda f: "alg:none" in f.title.lower() and "200" in f.evidence,
         "severity": "critical",
     },
+    "jwt_weak_secret": {
+        "base_confidence": 95,
+        "confirmed_if": lambda f: "weak secret" in f.title.lower() or "validates with weak secret" in f.evidence.lower(),
+        "severity": "critical",
+    },
+    "jwt_missing_exp": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "no 'exp'" in f.evidence.lower() or "missing expiration" in f.title.lower(),
+        "severity": "medium",
+    },
+    "jwt_long_lived": {
+        "base_confidence": 70,
+        "confirmed_if": lambda f: "long lifetime" in f.title.lower() or "90 days" in f.evidence.lower(),
+        "severity": "medium",
+    },
     "default_credentials": {
         "base_confidence": 95,
         "confirmed_if": lambda f: "login succeeded" in f.evidence.lower(),
@@ -535,20 +550,65 @@ VALIDATION_RULES = {
         "confirmed_if": lambda f: "id=1" in f.payload.lower() or "vs" in f.payload.lower(),
         "severity": "high",
     },
+    "broken_access_control_unauthenticated": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "without authentication" in f.evidence.lower() or "http 200" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "broken_access_control_horizontal": {
+        "base_confidence": 78,
+        "confirmed_if": lambda f: "similarity changed" in f.evidence.lower() or "horizontal" in f.title.lower(),
+        "severity": "high",
+    },
+    "access_control_method_exposure": {
+        "base_confidence": 65,
+        "confirmed_if": lambda f: "allow header" in f.evidence.lower() and any(m in f.evidence.upper() for m in ["PUT", "DELETE", "PATCH", "TRACE"]),
+        "severity": "medium",
+    },
     "path_traversal": {
         "base_confidence": 85,
         "confirmed_if": lambda f: "root:x:0" in f.evidence or "boot loader" in f.evidence.lower(),
         "severity": "high",
+    },
+    "lfi_wrapper": {
+        "base_confidence": 88,
+        "confirmed_if": lambda f: any(sig in f.evidence.lower() for sig in ["file signature", "php source", "root:x:0"]),
+        "severity": "high",
+    },
+    "rfi_remote_include": {
+        "base_confidence": 85,
+        "confirmed_if": lambda f: "remote marker" in f.evidence.lower() or "example domain" in f.evidence.lower(),
+        "severity": "critical",
     },
     "sensitive_file_exposure": {
         "base_confidence": 80,
         "confirmed_if": lambda f: "http 200" in f.evidence.lower(),
         "severity": "high",
     },
+    "sensitive_data_exposure": {
+        "base_confidence": 85,
+        "confirmed_if": lambda f: "http 200" in f.evidence.lower() and "sensitive" in f.title.lower(),
+        "severity": "high",
+    },
+    "secret_disclosure": {
+        "base_confidence": 92,
+        "confirmed_if": lambda f: "secret-like" in f.evidence.lower() or "private key" in (f.response or "").lower(),
+        "severity": "critical",
+    },
     "missing_security_header": {
         "base_confidence": 100,
         "confirmed_if": lambda _: True,
         "severity": "low",
+    },
+    "header_missing": {
+        "base_confidence": 100,
+        "confirmed_if": lambda f: "missing:" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "header_weak": {
+        "base_confidence": 90,
+        "confirmed_if": lambda f: "weak" in f.title.lower() or "unsafe-inline" in f.evidence.lower(),
+        "severity": "medium",
     },
     "open_redirect": {
         "base_confidence": 70,
@@ -655,10 +715,40 @@ VALIDATION_RULES = {
         "confirmed_if": lambda f: "race" in f.title.lower() or "concurrent" in f.evidence.lower(),
         "severity": "medium",
     },
+    "rate_limit_missing": {
+        "base_confidence": 75,
+        "confirmed_if": lambda f: "rapid requests" in f.evidence.lower() and "no throttle" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "rate_limit_bypass_xff": {
+        "base_confidence": 82,
+        "confirmed_if": lambda f: "x-forwarded-for" in (f.payload or "").lower() or "bypass" in f.title.lower(),
+        "severity": "high",
+    },
     "cors_wildcard": {
         "base_confidence": 70,
         "confirmed_if": lambda f: "access-control-allow-origin: *" in f.evidence.lower(),
         "severity": "medium",
+    },
+    "cors_wildcard_with_credentials": {
+        "base_confidence": 95,
+        "confirmed_if": lambda f: "acao='*'" in f.evidence.lower() and "acac='true'" in f.evidence.lower(),
+        "severity": "critical",
+    },
+    "cors_credentials_reflection": {
+        "base_confidence": 85,
+        "confirmed_if": lambda f: "reflected origin" in f.evidence.lower() and "acac='true'" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "cors_null_origin_trust": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "acao='null'" in f.evidence.lower() and "acac='true'" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "cors_private_network_wildcard": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "private-network" in f.evidence.lower(),
+        "severity": "high",
     },
     "cors_origin_reflection": {
         "base_confidence": 75,
@@ -689,6 +779,36 @@ VALIDATION_RULES = {
         "base_confidence": 65,
         "confirmed_if": lambda f: any(s in f.evidence.lower() for s in ["nosuchbucket", "no such app", "not found"]),
         "severity": "high",
+    },
+    "tls_missing_https": {
+        "base_confidence": 90,
+        "confirmed_if": lambda f: "not https" in f.evidence.lower() or "not use https" in f.title.lower(),
+        "severity": "medium",
+    },
+    "tls_legacy_protocol": {
+        "base_confidence": 90,
+        "confirmed_if": lambda f: any(v in f.evidence for v in ["TLSv1", "TLSv1.1"]),
+        "severity": "high",
+    },
+    "tls_weak_cipher": {
+        "base_confidence": 85,
+        "confirmed_if": lambda f: "cipher" in f.evidence.lower() and any(x in f.evidence.upper() for x in ["RC4", "3DES", "DES", "NULL", "MD5"]),
+        "severity": "high",
+    },
+    "tls_expired_cert": {
+        "base_confidence": 95,
+        "confirmed_if": lambda f: "expired" in f.title.lower() or "expired" in f.evidence.lower(),
+        "severity": "high",
+    },
+    "tls_expiring_cert": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "expiring" in f.title.lower() or "expires in" in f.evidence.lower(),
+        "severity": "medium",
+    },
+    "tls_self_signed": {
+        "base_confidence": 80,
+        "confirmed_if": lambda f: "self-signed" in f.title.lower() or "subject equals issuer" in f.evidence.lower(),
+        "severity": "medium",
     },
 }
 
