@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse, parse_qs, urlencode
 
 from core.models import Scope, Target, ScanState, Finding
+from core.orchestrator import SCANNER_REGISTRY
 from utils.http_client import HttpClient
 
 
@@ -197,35 +198,16 @@ EXPECTED_DETECTIONS = {
     "GraphQLScanner": ("graphql", False),
     "SubdomainTakeoverScanner": ("subdomain", False),
     "SSLTLSScanner": ("ssl", False),
+    "OpenAPIScanner": ("openapi_discovery", False),
+    "BOLAScanner": ("bola", False),
+    "MassAssignmentScanner": ("mass_assignment", False),
+    "OAuthOIDCScanner": ("oauth_oidc", False),
+    "SessionCookieScanner": ("session_cookie", False),
+    "CacheBehaviorScanner": ("authenticated_cache", False),
+    "WebSocketScanner": ("websocket", False),
 }
 
-SCANNER_IMPORTS = [
-    ("scanners.injection.sql_injection", "SQLInjectionScanner"),
-    ("scanners.xss.xss_scanner", "XSSScanner"),
-    ("scanners.ssrf.ssrf_scanner", "SSRFScanner"),
-    ("scanners.injection.ssti", "SSTIScanner"),
-    ("scanners.injection.command_injection", "CommandInjectionScanner"),
-    ("scanners.injection.crlf_injection", "CRLFInjectionScanner"),
-    ("scanners.file.path_traversal", "PathTraversalScanner"),
-    ("scanners.file.lfi_rfi_scanner", "LFIRFIScanner"),
-    ("scanners.authz.idor_scanner", "IDORScanner"),
-    ("scanners.misconfig.misconfig_scanner", "MisconfigScanner"),
-    ("scanners.redirect.open_redirect", "OpenRedirectScanner"),
-    ("scanners.auth.auth_scanner", "AuthScanner"),
-    ("scanners.auth.csrf_scanner", "CSRFScanner"),
-    ("scanners.auth.jwt_scanner", "JWTScanner"),
-    ("scanners.auth.rate_limit_scanner", "RateLimitScanner"),
-    ("scanners.auth.race_condition", "RaceConditionScanner"),
-    ("scanners.authz.broken_access_control", "BrokenAccessControlScanner"),
-    ("scanners.misconfig.cors_scanner", "CORSScanner"),
-    ("scanners.misconfig.header_security", "HeaderSecurityScanner"),
-    ("scanners.misconfig.sensitive_data_exposure", "SensitiveDataExposureScanner"),
-    ("scanners.misconfig.host_header", "HostHeaderScanner"),
-    ("scanners.injection.xxe_scanner", "XXEScanner"),
-    ("scanners.injection.graphql_scanner", "GraphQLScanner"),
-    ("scanners.recon.subdomain_takeover", "SubdomainTakeoverScanner"),
-    ("scanners.recon.ssl_tls_scanner", "SSLTLSScanner"),
-]
+SCANNER_IMPORTS = list(SCANNER_REGISTRY.values())
 
 
 async def main():
@@ -235,6 +217,12 @@ async def main():
     print("=" * 72)
     
     state = build_test_state()
+    registered_classes = {class_name for _, class_name in SCANNER_IMPORTS}
+    if set(EXPECTED_DETECTIONS) != registered_classes:
+        missing = sorted(registered_classes - set(EXPECTED_DETECTIONS))
+        stale = sorted(set(EXPECTED_DETECTIONS) - registered_classes)
+        print(f"Harness expectation mismatch: missing={missing}, stale={stale}")
+        return 1
     errors = []
     passed = []
     detections_passed = 0

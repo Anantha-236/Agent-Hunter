@@ -1,6 +1,6 @@
 # Agent-Hunter Architecture
 
-Last updated: 2026-04-04
+Last updated: 2026-09-23
 
 This document reflects the current architecture of this repository and aligns with the active code paths in `main.py`, `api_server.py`, and `core/orchestrator.py`.
 
@@ -110,18 +110,23 @@ Current scanner groups and modules:
 - `scanners/injection/`: `sql_injection`, `ssti`, `crlf_injection`, `command_injection`, `xxe_scanner`, `graphql_scanner`
 - `scanners/xss/`: `xss_scanner`
 - `scanners/ssrf/`: `ssrf`
-- `scanners/auth/`: `auth_scanner`, `jwt_scanner`, `rate_limit_scanner`, `csrf_scanner`, `race_condition`
-- `scanners/authz/`: `idor_scanner`, `broken_access_control`
+- `scanners/auth/`: `auth_scanner`, `oauth_oidc_scanner`, `session_cookie_scanner`, `jwt_scanner`, `rate_limit_scanner`, `csrf_scanner`, `race_condition`
+- `scanners/authz/`: `idor_scanner`, `bola_scanner`, `mass_assignment_scanner`, `broken_access_control`
 - `scanners/file/`: `path_traversal`, `lfi_rfi_scanner`
-- `scanners/misconfig/`: `misconfig_scanner`, `cors_scanner`, `header_security`, `sensitive_data_exposure`, `host_header`
+- `scanners/misconfig/`: `misconfig_scanner`, `cors_scanner`, `header_security`, `sensitive_data_exposure`, `host_header`, `cache_behavior_scanner`
 - `scanners/redirect/`: `open_redirect`
-- `scanners/recon/`: `subdomain_takeover`, `ssl_tls_scanner`
+- `scanners/recon/`: `subdomain_takeover`, `ssl_tls_scanner`, `openapi_scanner`
+- `scanners/realtime/`: `websocket_scanner`
 
-Total registered scanner modules: 25. The policy and capability gates decide which subset is eligible for a particular authorized scan.
+Total registered scanner modules: 32. The policy and capability gates decide which subset is eligible for a particular authorized scan.
 
 Every module has a machine-readable capability contract covering traffic class, request cost, permissions, controls, concurrency, fallback, and replay safety. Deterministic scope, policy, permission, and budget decisions run before RL ranking and before scanner construction.
 
 Header applicability is content-aware: document-only controls such as CSP and frame protections are not reported as missing on JSON, image, or stylesheet responses. API-relevant and transport headers are evaluated separately.
+
+Modern API coverage is passive or explicitly gated. OpenAPI operations remain unexecuted metadata candidates. BOLA and private-cache checks require two in-memory synthetic identities. Mass assignment is disabled by default and requires explicit permission, operator confirmation, an idempotency key, and verified cleanup. OAuth active checks require a permitted synthetic client and in-scope callback. WebSocket topic tests require identities and strict connection/message budgets.
+
+Raw passwords, tokens, cookie values, authorization headers, and OTPs are not part of persisted scanner state. Auth/session state records names and keyed fingerprints; confirmed high-impact modern findings require validator evidence plus positive and negative controls.
 
 ## 6. API and Dashboard Architecture
 
