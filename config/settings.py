@@ -115,6 +115,10 @@ SCAN_TIMEOUT_PER_MODULE: int = 300
 OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "./reports")
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", os.getenv("AGENT_LOG_LEVEL", "INFO"))
 
+# ── Outbound report email (secrets are read only by integrations/email) ──
+SMTP_DEFAULT_PORT: int = 587
+SMTP_DEFAULT_MAX_ATTACHMENT_BYTES: int = 5 * 1024 * 1024
+
 class Severity:
     CRITICAL = "critical"
     HIGH     = "high"
