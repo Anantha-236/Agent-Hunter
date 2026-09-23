@@ -4,7 +4,10 @@ Report Generator — produces Markdown, JSON, and HTML reports.
 from __future__ import annotations
 import json
 import os
+import hashlib
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from config.settings import OUTPUT_DIR, SEVERITY_ORDER, Severity
@@ -27,6 +30,14 @@ SEVERITY_COLORS = {
     Severity.LOW:      "#3498db",
     Severity.INFO:     "#95a5a6",
 }
+
+
+@dataclass(frozen=True)
+class PreparedEmailArtifact:
+    path: str
+    manifest_path: str
+    sha256: str
+    size_bytes: int
 
 
 class Reporter:
@@ -408,6 +419,46 @@ pre {{ padding: 1rem; margin: 0.5rem 0; overflow-x: auto; display: block; }}
             f.write(html_content)
 
         return md_path, json_path
+
+    def prepare_email_artifact(
+        self,
+        state: ScanState,
+        executive_summary: str = "",
+    ) -> PreparedEmailArtifact:
+        """Create a redacted, content-addressed artifact without sending it."""
+        content = json.dumps(
+            self.generate_json(state, executive_summary),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        digest = hashlib.sha256(content).hexdigest()
+        artifact_dir = Path(self.output_dir) / "email-artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        path = artifact_dir / f"{digest}.json"
+        manifest_path = artifact_dir / f"{digest}.manifest.json"
+        if not path.exists():
+            path.write_bytes(content)
+        elif hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError("existing email artifact failed digest verification")
+        manifest = {
+            "schema": "agent-hunter.email-artifact.v1",
+            "sha256": digest,
+            "size_bytes": len(content),
+            "scan_id": state.scan_id,
+            "redacted": True,
+        }
+        encoded_manifest = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":")
+        )
+        if not manifest_path.exists():
+            manifest_path.write_text(encoded_manifest, encoding="utf-8")
+        return PreparedEmailArtifact(
+            path=str(path),
+            manifest_path=str(manifest_path),
+            sha256=digest,
+            size_bytes=len(content),
+        )
 
     def _duration(self, state: ScanState) -> str:
         if state.ended_at:
