@@ -79,6 +79,11 @@ _DEFAULT_CAPABILITIES = {
     "jwt_scanner": _capability("jwt_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("synthetic_token_testing",)),
     "rate_limit_scanner": _capability("rate_limit_scanner", TrafficClass.DISRUPTIVE, 50, max_concurrency=1, permissions=("rate_limit_testing",)),
     "idor_scanner": _capability("idor_scanner", TrafficClass.SAFE_ACTIVE, 30, permissions=("test_identity_access",)),
+    "bola_scanner": _capability("bola_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("test_identity_access",)),
+    "mass_assignment_scanner": _capability(
+        "mass_assignment_scanner", TrafficClass.STATE_CHANGING, 6,
+        permissions=("mass_assignment_testing",), idempotent=False,
+    ),
     "broken_access_control": _capability("broken_access_control", TrafficClass.SAFE_ACTIVE, 30, permissions=("test_identity_access",)),
     "path_traversal": _capability("path_traversal", TrafficClass.SAFE_ACTIVE, 40),
     "lfi_rfi_scanner": _capability("lfi_rfi_scanner", TrafficClass.SAFE_ACTIVE, 40),

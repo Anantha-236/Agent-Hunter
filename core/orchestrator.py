@@ -62,6 +62,8 @@ SCANNER_REGISTRY = {
     "jwt_scanner":         ("scanners.auth.jwt_scanner",             "JWTScanner"),
     "rate_limit_scanner":  ("scanners.auth.rate_limit_scanner",      "RateLimitScanner"),
     "idor_scanner":        ("scanners.authz.idor_scanner",           "IDORScanner"),
+    "bola_scanner":        ("scanners.authz.bola_scanner",           "BOLAScanner"),
+    "mass_assignment_scanner": ("scanners.authz.mass_assignment_scanner", "MassAssignmentScanner"),
     "broken_access_control": ("scanners.authz.broken_access_control", "BrokenAccessControlScanner"),
     "path_traversal":      ("scanners.file.path_traversal",          "PathTraversalScanner"),
     "lfi_rfi_scanner":     ("scanners.file.lfi_rfi_scanner",         "LFIRFIScanner"),
@@ -812,7 +814,10 @@ class Orchestrator:
             )
             self._save_checkpoint(state)
             try:
-                scanner = cls(self._client)
+                scanner_kwargs = {}
+                if name in {"bola_scanner", "mass_assignment_scanner"}:
+                    scanner_kwargs["identities"] = tuple(self.auth.test_identities)
+                scanner = cls(self._client, **scanner_kwargs)
             except Exception as exc:
                 state.failure_counts[name] = state.failure_counts.get(name, 0) + 1
                 state.action_journal[decision.decision_id]["status"] = "failed"

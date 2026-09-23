@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
+from core.test_identities import TestIdentity, secret_state_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class AuthSession:
         self.authenticated = False
         self.auth_method: str = ""
         self.user_roles: List[str] = []
+        self.test_identities: List[TestIdentity] = []
 
     async def login_form(self, client, login_url: str,
                          username: str, password: str,
@@ -129,6 +131,12 @@ class AuthSession:
         """Get all auth-related cookies."""
         return {**self.cookies}
 
+    def set_test_identities(self, identities: List[TestIdentity]) -> None:
+        labels = [identity.label for identity in identities]
+        if len(labels) != len(set(labels)):
+            raise ValueError("test identity labels must be unique")
+        self.test_identities = list(identities)
+
     async def test_auth(self, client, protected_url: str) -> bool:
         """Test if current session is still authenticated."""
         try:
@@ -169,10 +177,18 @@ class AuthSession:
         return str(current) if current else None
 
     def to_dict(self) -> Dict[str, Any]:
+        secret_state = {
+            **{f"cookie:{name}": value for name, value in self.cookies.items()},
+            **{f"header:{name}": value for name, value in self.headers.items()},
+            **{f"token:{name}": value for name, value in self.tokens.items()},
+        }
         return {
             "authenticated": self.authenticated,
             "method": self.auth_method,
-            "cookies": self.cookies,
-            "custom_headers": self.headers,
+            "cookie_names": sorted(self.cookies),
+            "custom_header_names": sorted(self.headers),
+            "token_names": sorted(self.tokens),
+            "secret_state_fingerprint": secret_state_fingerprint(secret_state),
             "roles": self.user_roles,
+            "test_identities": [identity.to_dict() for identity in self.test_identities],
         }
