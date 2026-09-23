@@ -12,7 +12,7 @@ Important legal notice: Running this tool against systems without explicit writt
 
 * Autonomous multi-stage scan pipeline: pre-engagement -> recon -> strategy -> scan -> validate -> reflect
 * RL-driven adaptive module selection and reward-based learning across scans
-* 25 registered scanner modules covering injection, authorization, authentication, files, configuration, transport, and reconnaissance checks
+* 32 registered scanner modules covering injection, authorization, authentication, APIs, sessions, files, configuration, transport, and reconnaissance checks
 * Policy, scope, and safety enforcement before and during active testing
 * Real-time dashboard with live logs, findings stream, and scan progress
 * API-first architecture with FastAPI endpoints and SSE streaming
@@ -71,7 +71,47 @@ project-name/
 |- requirements.txt
 |- README.md
 
-## Installation
+## Quick start on Windows
+
+Prerequisites:
+
+* Python 3.12
+* Node.js 22 or another current Node.js release supported by the dashboard toolchain
+* Git
+
+From PowerShell in the repository root, create an isolated Python environment and install the backend and dashboard dependencies:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+Set-Location dashboard
+npm.cmd install
+Set-Location ..
+```
+
+Start the API and dashboard together:
+
+```powershell
+python startservers.py --skip-python-install --skip-dashboard-install
+```
+
+Then open:
+
+* Dashboard: http://localhost:5173
+* API documentation: http://localhost:8888/docs
+
+Press `Ctrl+C` in the launcher terminal to stop the services it started.
+
+For the complete automated test suite, install the development requirements and run pytest:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+## Manual installation
 
 1. Clone the repository
    git clone https://github.com/Anantha-236/Agent-Hunter.git
@@ -79,28 +119,34 @@ project-name/
 2. Navigate to the project directory
    cd Agent-Hunter
 
-3. Install dependencies
-   pip install -r requirements.txt
+3. Create and activate a virtual environment
+   `python -m venv .venv`
+   `.\.venv\Scripts\Activate.ps1`
 
-4. Install dashboard dependencies
+4. Install dependencies
+   `python -m pip install -r requirements.txt`
+
+5. Install dashboard dependencies
    cd dashboard
-   npm install
+   npm.cmd install
    cd ..
 
 ## Usage
 
 Run backend API server:
 
-python -m uvicorn api_server:app --host 0.0.0.0 --port 8888 --reload
+`python -m uvicorn api_server:app --host 127.0.0.1 --port 8888 --reload`
 
 Run dashboard:
 
 cd dashboard
-npm run dev
+`npm.cmd run dev`
 
 Run a CLI scan only against a locally controlled or explicitly authorized target, with a current policy profile:
 
-python main.py --target http://127.0.0.1:8000 --policy policies/authorized-local.json --yes --no-tui
+`python main.py --target http://127.0.0.1:8000 --scope 127.0.0.1 --yes --no-tui --no-ai --no-memory`
+
+For a non-local authorized target, create a policy file from the examples in `data/` and replace every placeholder with the program's current written scope and rules before scanning. Do not use the fictional Acme example unchanged.
 
 Open in browser:
 http://localhost:5173

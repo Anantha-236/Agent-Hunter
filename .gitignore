@@ -44,10 +44,12 @@ reports/outbox/
 
 # Agents skills cache
 .agents/
+.superpowers/
 skills-lock.json
 
 # Temp / waste files
 temp/
+scan_checkpoint.json
 
 # Isolated implementation worktrees
 .worktrees/
