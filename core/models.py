@@ -320,6 +320,12 @@ class ScanState:
     decisions: List[DecisionRecord] = field(default_factory=list)
     coverage: List[CoverageRecord] = field(default_factory=list)
     policy_snapshot_hash: str = ""
+    action_journal: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    remaining_request_budget: int = 1000
+    remaining_risk_budget: int = 100
+    failure_counts: Dict[str, int] = field(default_factory=dict)
+    module_cursor: int = 0
+    checkpoint_generation: int = 0
     scan_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     started_at: datetime = field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
@@ -340,6 +346,15 @@ class ScanState:
             "decisions": [decision.to_dict() for decision in self.decisions],
             "coverage": [record.to_dict() for record in self.coverage],
             "policy_snapshot_hash": self.policy_snapshot_hash,
+            "action_journal": {
+                action_id: dict(record)
+                for action_id, record in self.action_journal.items()
+            },
+            "remaining_request_budget": self.remaining_request_budget,
+            "remaining_risk_budget": self.remaining_risk_budget,
+            "failure_counts": dict(self.failure_counts),
+            "module_cursor": self.module_cursor,
+            "checkpoint_generation": self.checkpoint_generation,
             "started_at": self.started_at.isoformat(),
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
         }

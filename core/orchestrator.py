@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
 from config.settings import ENABLED_MODULES, HUNTER_POLICY_BACKEND, SCAN_TIMEOUT_PER_MODULE, RL_REWARD_MAP
@@ -17,7 +18,20 @@ from core.Hunter_brain import AIBrain
 from core.base_scanner import BaseScanner
 from core.bbp_policy import BBPPolicy, PolicyEnforcer
 from core.memory import ScanMemory
-from core.models import Finding, ScanState, Target
+from core.decision_engine import DecisionContext, DecisionEngine
+from core.models import (
+    CoverageRecord,
+    CoverageStatus,
+    DecisionOutcome,
+    DecisionRecord,
+    EvidenceRef,
+    EvidenceStatus,
+    Finding,
+    ScanState,
+    Target,
+)
+from core.recovery import AtomicJsonStore, RecoveryError
+from core.scanner_capabilities import CapabilityRegistry, TrafficClass
 from core.pre_engagement import (
     PreEngagementChecklist, PreEngagementGate, PreEngagementResult,
     print_pre_engagement_banner,
@@ -67,6 +81,11 @@ SCANNER_REGISTRY = {
 }
 
 CHECKPOINT_FILE = "scan_checkpoint.json"
+CHECKPOINT_SCHEMA = "agent-hunter.scan-checkpoint.v2"
+
+
+class ResumeBlocked(RuntimeError):
+    """Raised when a checkpoint cannot be replayed without human review."""
 
 
 def load_scanner(name: str) -> Optional[Type[BaseScanner]]:
@@ -89,7 +108,10 @@ class Orchestrator:
                  pre_engagement_checklist: PreEngagementChecklist = None,
                  auto_confirm: bool = False, verify_ssl: bool = True,
                  crawl_depth: int = 3, http_concurrency: Optional[int] = None,
-                 http_settings: Optional[Dict[str, Any]] = None):
+                 http_settings: Optional[Dict[str, Any]] = None,
+                 checkpoint_root: str | Path = Path("reports") / "checkpoints",
+                 capability_registry: Optional[CapabilityRegistry] = None,
+                 policy_snapshot_hash: str = ""):
         self.target = target
         self.modules = modules or list(SCANNER_REGISTRY.keys())
         self.use_ai = use_ai
@@ -103,6 +125,9 @@ class Orchestrator:
         self.headers = headers or {}
         self.use_tui = use_tui
         self._client = None
+        self.checkpoint_root = Path(checkpoint_root)
+        self.capability_registry = capability_registry or CapabilityRegistry.default()
+        self.decision_engine = DecisionEngine(self.capability_registry)
 
         # -- Core systems --
         self.ai = AIBrain()
@@ -138,6 +163,10 @@ class Orchestrator:
 
         # -- Policy & Pre-Engagement Gate --
         self.policy = policy
+        self.policy_snapshot_hash = (
+            policy_snapshot_hash
+            or (policy.policy_snapshot_hash if policy else "")
+        )
         self.policy_enforcer = PolicyEnforcer(policy) if policy else None
         self._pre_engagement_checklist = pre_engagement_checklist
         self._pre_engagement_result: Optional[PreEngagementResult] = None
@@ -242,6 +271,10 @@ class Orchestrator:
             thought_callback=thought_callback,
             phase_callback=phase_callback,
             finding_callback=finding_callback,
+            policy_snapshot_hash=self.policy_snapshot_hash,
+            remaining_request_budget=(
+                self.policy.max_request_budget if self.policy else 1000
+            ),
         )
         state.log_thought("Scan started")
 
@@ -663,9 +696,44 @@ class Orchestrator:
         if not state.modules_pending:
             state.modules_pending = list(self.modules)
 
+        # A deterministic capability/policy decision is made before importing,
+        # constructing, setting up, or running a scanner. RL only ranks actions
+        # that survive this gate.
+        allowed_modules = []
+        for module_name in list(state.modules_pending):
+            decision = self._decide_module(state, module_name)
+            state.decisions.append(decision)
+            if decision.outcome is DecisionOutcome.CONTINUE:
+                allowed_modules.append(module_name)
+                continue
+            state.coverage.append(CoverageRecord(
+                module=module_name,
+                status=(
+                    CoverageStatus.BLOCKED
+                    if decision.outcome is DecisionOutcome.STOP
+                    else CoverageStatus.DEFERRED
+                ),
+                reason=decision.reason,
+                action_id=decision.decision_id,
+            ))
+            state.log_thought(
+                f"Decision {decision.outcome.value}: {module_name} - {decision.reason}"
+            )
+            if decision.outcome is DecisionOutcome.STOP:
+                state.modules_pending.clear()
+                return
+        state.modules_pending = allowed_modules
+
         # Filter out modules disabled by pre-engagement gate
         if self._pre_engagement_result and self._pre_engagement_result.disabled_modules:
             disabled = set(self._pre_engagement_result.disabled_modules)
+            for module_name in state.modules_pending:
+                if module_name in disabled:
+                    state.coverage.append(CoverageRecord(
+                        module=module_name,
+                        status=CoverageStatus.BLOCKED,
+                        reason="Disabled by the pre-engagement policy gate.",
+                    ))
             before = len(state.modules_pending)
             state.modules_pending = [m for m in state.modules_pending if m not in disabled]
             if len(state.modules_pending) < before:
@@ -704,7 +772,59 @@ class Orchestrator:
             if name not in scanner_map:
                 name = available_modules[0]
             cls = scanner_map[name]
-            scanner = cls(self._client)
+            decision = self._decide_module(state, name)
+            state.decisions.append(decision)
+            if decision.outcome is not DecisionOutcome.CONTINUE:
+                state.modules_pending.remove(name)
+                state.coverage.append(CoverageRecord(
+                    module=name,
+                    status=(
+                        CoverageStatus.BLOCKED
+                        if decision.outcome is DecisionOutcome.STOP
+                        else CoverageStatus.DEFERRED
+                    ),
+                    reason=decision.reason,
+                    action_id=decision.decision_id,
+                ))
+                if decision.outcome is DecisionOutcome.STOP:
+                    state.modules_pending.clear()
+                continue
+            capability = self.capability_registry.require(name)
+            state.action_journal[decision.decision_id] = {
+                "module": name,
+                "status": "started",
+                "idempotent": capability.idempotent,
+                "request_cost": capability.request_cost,
+                "started_at": datetime.now(UTC).isoformat(),
+            }
+            state.remaining_request_budget = max(
+                0, state.remaining_request_budget - capability.request_cost
+            )
+            risk_cost = {
+                TrafficClass.PASSIVE: 0,
+                TrafficClass.SAFE_ACTIVE: 1,
+                TrafficClass.STATE_CHANGING: 5,
+                TrafficClass.DISRUPTIVE: 10,
+            }[capability.traffic_class]
+            state.remaining_risk_budget = max(
+                0, state.remaining_risk_budget - risk_cost
+            )
+            self._save_checkpoint(state)
+            try:
+                scanner = cls(self._client)
+            except Exception as exc:
+                state.failure_counts[name] = state.failure_counts.get(name, 0) + 1
+                state.action_journal[decision.decision_id]["status"] = "failed"
+                state.coverage.append(CoverageRecord(
+                    module=name,
+                    status=CoverageStatus.FAILED,
+                    reason=f"scanner construction failed: {exc}",
+                    action_id=decision.decision_id,
+                ))
+                state.errors.append(f"{name}: {exc}")
+                state.modules_pending.remove(name)
+                self._save_checkpoint(state)
+                continue
             # Wire WAF-aware bypass into the scanner
             waf_name = self.target.metadata.get("waf", "")
             if waf_name:
@@ -724,6 +844,12 @@ class Orchestrator:
                 )
                 module_end = _t.monotonic()
                 state.modules_run.append(name)
+                state.module_cursor += 1
+                state.failure_counts[name] = 0
+                state.action_journal[decision.decision_id].update({
+                    "status": "completed",
+                    "completed_at": datetime.now(UTC).isoformat(),
+                })
 
                 findings = findings or []
 
@@ -857,8 +983,27 @@ class Orchestrator:
 
                 if self._tui:
                     self._tui.complete_module("Scanning")
+                state.coverage.append(CoverageRecord(
+                    module=name,
+                    status=CoverageStatus.TESTED,
+                    reason="Scanner completed under the approved capability decision.",
+                    action_id=decision.decision_id,
+                    evidence_ids=[
+                        ref.evidence_id
+                        for finding in findings
+                        for ref in finding.evidence_refs
+                    ],
+                ))
 
             except asyncio.TimeoutError:
+                state.failure_counts[name] = state.failure_counts.get(name, 0) + 1
+                state.action_journal[decision.decision_id]["status"] = "failed"
+                state.coverage.append(CoverageRecord(
+                    module=name,
+                    status=CoverageStatus.FAILED,
+                    reason=f"timeout after {SCAN_TIMEOUT_PER_MODULE}s",
+                    action_id=decision.decision_id,
+                ))
                 state.errors.append(f"{name}: timeout after {SCAN_TIMEOUT_PER_MODULE}s")
                 self.reward.record("no_progress_action", module=name)
                 next_env = self._build_env_state(state)
@@ -867,6 +1012,14 @@ class Orchestrator:
                 self._module_rewards[name] = -1.0
                 state.log_thought(f"RL update: {name} reward=-1.00 (timeout)")
             except Exception as exc:
+                state.failure_counts[name] = state.failure_counts.get(name, 0) + 1
+                state.action_journal[decision.decision_id]["status"] = "failed"
+                state.coverage.append(CoverageRecord(
+                    module=name,
+                    status=CoverageStatus.FAILED,
+                    reason=str(exc),
+                    action_id=decision.decision_id,
+                ))
                 state.errors.append(f"{name}: {exc}")
                 self.reward.record("incorrect_exploit_attempt", module=name,
                                    detail=str(exc))
@@ -884,6 +1037,36 @@ class Orchestrator:
 
         state.log_thought(f"Raw findings: {len(state.findings)}")
         self._tui_thought(f"Scan complete: {len(state.findings)} raw findings")
+
+    def _decide_module(self, state: ScanState, module_name: str) -> DecisionRecord:
+        if self.policy:
+            allowed_classes = {
+                TrafficClass(value) for value in self.policy.allowed_traffic_classes
+            }
+            permissions = set(self.policy.granted_permissions)
+            policy_fresh = self.policy.policy_fresh
+        else:
+            allowed_classes = {TrafficClass.PASSIVE, TrafficClass.SAFE_ACTIVE}
+            permissions = set()
+            policy_fresh = bool(state.policy_snapshot_hash)
+
+        return self.decision_engine.evaluate(DecisionContext(
+            target=state.target,
+            candidate_actions=[module_name],
+            policy_snapshot_hash=state.policy_snapshot_hash,
+            policy_fresh=policy_fresh,
+            allowed_traffic_classes=allowed_classes,
+            granted_permissions=permissions,
+            remaining_request_budget=state.remaining_request_budget,
+            remaining_risk_budget=state.remaining_risk_budget,
+            ambiguous_state=any(
+                action.get("module") == module_name
+                and action.get("status") in {"started", "ambiguous"}
+                and not action.get("idempotent", True)
+                for action in state.action_journal.values()
+            ),
+            failure_counts=state.failure_counts,
+        ))
 
     def _compute_rl_module_reward(self, findings, known: set) -> float:
         """Compute per-module reward signal for online RL updates."""
@@ -1143,15 +1326,32 @@ class Orchestrator:
 
     # ── Checkpoint / Resume ───────────────────────────────────
 
+    def checkpoint_path_for(self, scan_id: str) -> Path:
+        return self.checkpoint_root / scan_id / "checkpoint.json"
+
+    def _checkpoint_store(self, path: str | Path) -> AtomicJsonStore:
+        return AtomicJsonStore(Path(path), CHECKPOINT_SCHEMA, retain=3)
+
     def _save_checkpoint(self, state: ScanState, resume_phase: Optional[str] = None) -> None:
         try:
             data = {
+                "schema_version": 2,
+                "application_version": "agent-hunter-modernization-v2",
                 "scan_id": state.scan_id,
                 "phase": state.phase,
                 "resume_phase": resume_phase or state.phase,
                 "target_url": state.target.url,
+                "target_id": state.target.id,
+                "policy_snapshot_hash": state.policy_snapshot_hash,
                 "modules_run": state.modules_run,
                 "modules_pending": state.modules_pending,
+                "module_cursor": state.module_cursor,
+                "action_journal": state.action_journal,
+                "remaining_request_budget": state.remaining_request_budget,
+                "remaining_risk_budget": state.remaining_risk_budget,
+                "failure_counts": state.failure_counts,
+                "decisions": [decision.to_dict() for decision in state.decisions],
+                "coverage": [record.to_dict() for record in state.coverage],
                 "findings_count": len(state.findings),
                 "findings": [f.to_dict() for f in state.findings],
                 "discovered_urls": state.target.discovered_urls,
@@ -1162,18 +1362,125 @@ class Orchestrator:
                 "reward": self.reward.to_dict(),
                 "timestamp": datetime.now(UTC).isoformat(),
             }
-            with open(CHECKPOINT_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+            path = self.checkpoint_path_for(state.scan_id)
+            envelope = self._checkpoint_store(path).write(data)
+            state.checkpoint_generation = envelope.generation
+            self._active_checkpoint_path = path
         except Exception as exc:
             logger.debug(f"Checkpoint save failed: {exc}")
 
     def _load_checkpoint(self, state: ScanState, checkpoint_path: str) -> ScanState:
+        return self._resume_into(state, Path(checkpoint_path), state.policy_snapshot_hash)
+
+    def resume(
+        self,
+        checkpoint_path: str | Path,
+        *,
+        policy_hash: str,
+    ) -> ScanState:
+        state = ScanState(
+            target=self.target,
+            policy_snapshot_hash=policy_hash,
+            remaining_request_budget=(
+                self.policy.max_request_budget if self.policy else 1000
+            ),
+        )
+        return self._resume_into(state, Path(checkpoint_path), policy_hash)
+
+    def _read_checkpoint_payload(self, checkpoint_path: Path) -> tuple[dict, int]:
         try:
-            with open(checkpoint_path) as f:
-                data = json.load(f)
+            raw = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raw = None
+        if isinstance(raw, dict) and "schema" not in raw:
+            raise ResumeBlocked(
+                "legacy checkpoint requires explicit policy re-acknowledgement and import"
+            )
+
+        store = self._checkpoint_store(checkpoint_path)
+        try:
+            data = store.read()
+        except RecoveryError:
+            data = store.restore_last_known_good()
+        envelope = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        return data, int(envelope["generation"])
+
+    @staticmethod
+    def _decision_from_dict(raw: dict) -> DecisionRecord:
+        values = dict(raw)
+        values["outcome"] = DecisionOutcome(values.get("outcome", "defer"))
+        if values.get("timestamp"):
+            values["timestamp"] = datetime.fromisoformat(values["timestamp"])
+        return DecisionRecord(**{
+            key: value for key, value in values.items()
+            if key in DecisionRecord.__dataclass_fields__
+        })
+
+    @staticmethod
+    def _coverage_from_dict(raw: dict) -> CoverageRecord:
+        values = dict(raw)
+        values["status"] = CoverageStatus(values.get("status", "not_tested"))
+        if values.get("updated_at"):
+            values["updated_at"] = datetime.fromisoformat(values["updated_at"])
+        return CoverageRecord(**{
+            key: value for key, value in values.items()
+            if key in CoverageRecord.__dataclass_fields__
+        })
+
+    @staticmethod
+    def _finding_from_dict(raw: dict) -> Finding:
+        values = dict(raw)
+        if values.get("discovered_at"):
+            values["discovered_at"] = datetime.fromisoformat(values["discovered_at"])
+        values["evidence_status"] = EvidenceStatus(
+            values.get("evidence_status", "observed")
+        )
+        values["evidence_refs"] = [
+            EvidenceRef(
+                evidence_id=ref["evidence_id"],
+                kind=ref["kind"],
+                captured_at=datetime.fromisoformat(ref["captured_at"]),
+                digest=ref["digest"],
+                redacted=bool(ref["redacted"]),
+                summary=ref.get("summary", ""),
+            )
+            for ref in values.get("evidence_refs", [])
+        ]
+        return Finding(**{
+            key: value for key, value in values.items()
+            if key in Finding.__dataclass_fields__
+        })
+
+    def _resume_into(
+        self,
+        state: ScanState,
+        checkpoint_path: Path,
+        policy_hash: str,
+    ) -> ScanState:
+        data, generation = self._read_checkpoint_payload(checkpoint_path)
+        saved_policy_hash = data.get("policy_snapshot_hash", "")
+        if not saved_policy_hash or saved_policy_hash != policy_hash:
+            raise ResumeBlocked("policy snapshot changed; resume requires human review")
+        if data.get("target_url") != state.target.url:
+            raise ResumeBlocked("checkpoint target identity changed")
+
+        try:
+            state.scan_id = data["scan_id"]
             state.phase = data.get("resume_phase", data.get("phase", "init"))
             state.modules_run = data.get("modules_run", [])
             state.modules_pending = data.get("modules_pending", [])
+            state.module_cursor = int(data.get("module_cursor", len(state.modules_run)))
+            state.action_journal = dict(data.get("action_journal", {}))
+            state.remaining_request_budget = int(data.get("remaining_request_budget", 0))
+            state.remaining_risk_budget = int(data.get("remaining_risk_budget", 0))
+            state.failure_counts = dict(data.get("failure_counts", {}))
+            state.decisions = [
+                self._decision_from_dict(item) for item in data.get("decisions", [])
+            ]
+            state.coverage = [
+                self._coverage_from_dict(item) for item in data.get("coverage", [])
+            ]
+            state.checkpoint_generation = generation
             state.errors = data.get("errors", [])
             state.agent_thoughts = data.get("thoughts", [])
             if "discovered_urls" in data:
@@ -1183,26 +1490,43 @@ class Orchestrator:
             if "technologies" in data:
                 state.target.technologies = data["technologies"]
             if "findings" in data:
-                for fd in data["findings"]:
-                    state.findings.append(Finding(**{
-                        k: v for k, v in fd.items()
-                        if k in Finding.__dataclass_fields__ and k != "discovered_at"
-                    }))
+                state.findings = [
+                    self._finding_from_dict(item) for item in data["findings"]
+                ]
             if "reward" in data:
                 self.reward = RewardEngine.from_dict(data["reward"])
+
+            for action_id, action in state.action_journal.items():
+                if action.get("status") != "started" or action.get("idempotent", True):
+                    continue
+                action["status"] = "ambiguous"
+                module = str(action.get("module", "unknown"))
+                state.modules_pending = [m for m in state.modules_pending if m != module]
+                state.decisions.append(DecisionRecord(
+                    outcome=DecisionOutcome.ESCALATE,
+                    reason="An unfinished non-idempotent action has an ambiguous outcome.",
+                    candidate_actions=[module],
+                    denied_actions={module: "ambiguous_non_idempotent_state"},
+                    recovery_plan=(
+                        "Inspect target state and obtain human approval before retrying."
+                    ),
+                    policy_snapshot_hash=policy_hash,
+                ))
             saved_phase = data.get("phase", state.phase)
             state.log_thought(
                 f"Resumed from checkpoint (phase: {state.phase}, last_status: {saved_phase})"
             )
             logger.info(f"Scan resumed from phase: {state.phase} (last_status={saved_phase})")
-        except Exception as exc:
-            logger.warning(f"Could not load checkpoint: {exc}")
+            self._active_checkpoint_path = checkpoint_path
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ResumeBlocked(f"checkpoint payload is invalid: {exc}") from exc
         return state
 
     def _remove_checkpoint(self) -> None:
         try:
-            if os.path.exists(CHECKPOINT_FILE):
-                os.remove(CHECKPOINT_FILE)
+            checkpoint = getattr(self, "_active_checkpoint_path", None)
+            if checkpoint and Path(checkpoint).exists():
+                Path(checkpoint).unlink()
         except Exception:
             pass
 
