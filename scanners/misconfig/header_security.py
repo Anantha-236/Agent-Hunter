@@ -17,6 +17,19 @@ REQUIRED_HEADERS = {
     "referrer-policy": "Referrer-Policy",
     "permissions-policy": "Permissions-Policy",
 }
+DOCUMENT_ONLY_HEADERS = {
+    "content-security-policy",
+    "x-frame-options",
+}
+
+
+def _is_browser_document(content_type: str) -> bool:
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    return media_type in {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+    }
 
 
 class HeaderSecurityScanner(BaseScanner):
@@ -58,29 +71,37 @@ class HeaderSecurityScanner(BaseScanner):
 
         hdrs = {k.lower(): v for k, v in resp.headers.items()}
 
-        missing = []
+        is_document = _is_browser_document(hdrs.get("content-type", ""))
         for key, label in REQUIRED_HEADERS.items():
+            if key in DOCUMENT_ONLY_HEADERS and not is_document:
+                continue
             if key not in hdrs:
                 # HSTS is expected only on HTTPS endpoints.
                 if key == "strict-transport-security" and not url.lower().startswith("https://"):
                     continue
-                missing.append(label)
-
-        if missing:
-            findings.append(self.make_finding(
-                title="Missing security headers",
-                vuln_type="header_missing",
-                severity=Severity.MEDIUM,
-                url=url,
-                evidence=f"Missing: {', '.join(missing)}",
-                request=raw_req,
-                cwe_id="CWE-693",
-                owasp_category="A05:2021 - Security Misconfiguration",
-            ))
+                findings.append(self.make_finding(
+                    title=f"Missing security header: {label}",
+                    vuln_type="header_missing",
+                    severity=Severity.MEDIUM,
+                    url=url,
+                    evidence=f"Applicable response is missing {label}.",
+                    request=raw_req,
+                    cwe_id="CWE-693",
+                    owasp_category="A05:2021 - Security Misconfiguration",
+                    extra={
+                        "header": key,
+                        "content_type": hdrs.get("content-type", "unknown"),
+                        "applicability": (
+                            "browser_document"
+                            if key in DOCUMENT_ONLY_HEADERS
+                            else "general_response"
+                        ),
+                    },
+                ))
 
         weak_reasons = []
 
-        csp = (hdrs.get("content-security-policy") or "").lower()
+        csp = (hdrs.get("content-security-policy") or "").lower() if is_document else ""
         if csp and ("unsafe-inline" in csp or "unsafe-eval" in csp):
             weak_reasons.append("CSP allows unsafe-inline/unsafe-eval")
 
@@ -93,7 +114,7 @@ class HeaderSecurityScanner(BaseScanner):
             except Exception:
                 weak_reasons.append("HSTS max-age parsing failed")
 
-        xfo = (hdrs.get("x-frame-options") or "").upper()
+        xfo = (hdrs.get("x-frame-options") or "").upper() if is_document else ""
         if xfo and xfo not in ("DENY", "SAMEORIGIN"):
             weak_reasons.append(f"X-Frame-Options is weak: {xfo}")
 

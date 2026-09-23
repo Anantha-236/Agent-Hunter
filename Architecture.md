@@ -110,14 +110,18 @@ Current scanner groups and modules:
 - `scanners/injection/`: `sql_injection`, `ssti`, `crlf_injection`, `command_injection`, `xxe_scanner`, `graphql_scanner`
 - `scanners/xss/`: `xss_scanner`
 - `scanners/ssrf/`: `ssrf`
-- `scanners/auth/`: `auth_scanner`, `csrf_scanner`, `race_condition`
-- `scanners/authz/`: `idor_scanner`
-- `scanners/file/`: `path_traversal`
-- `scanners/misconfig/`: `misconfig_scanner`, `host_header`
+- `scanners/auth/`: `auth_scanner`, `jwt_scanner`, `rate_limit_scanner`, `csrf_scanner`, `race_condition`
+- `scanners/authz/`: `idor_scanner`, `broken_access_control`
+- `scanners/file/`: `path_traversal`, `lfi_rfi_scanner`
+- `scanners/misconfig/`: `misconfig_scanner`, `cors_scanner`, `header_security`, `sensitive_data_exposure`, `host_header`
 - `scanners/redirect/`: `open_redirect`
-- `scanners/recon/`: `subdomain_takeover`
+- `scanners/recon/`: `subdomain_takeover`, `ssl_tls_scanner`
 
-Total enabled scanner modules: 17.
+Total registered scanner modules: 25. The policy and capability gates decide which subset is eligible for a particular authorized scan.
+
+Every module has a machine-readable capability contract covering traffic class, request cost, permissions, controls, concurrency, fallback, and replay safety. Deterministic scope, policy, permission, and budget decisions run before RL ranking and before scanner construction.
+
+Header applicability is content-aware: document-only controls such as CSP and frame protections are not reported as missing on JSON, image, or stylesheet responses. API-relevant and transport headers are evaluated separately.
 
 ## 6. API and Dashboard Architecture
 
@@ -161,7 +165,7 @@ API service characteristics:
 
 ### File-based state
 
-- `scan_checkpoint.json`: resume state during interrupted scans.
+- `reports/checkpoints/<scan-id>/checkpoint.json`: checksummed, versioned resume state with bounded last-known-good backups.
 - `reports/scan_*.md`: markdown reports.
 - `reports/scan_*.json`: structured report exports.
 - `reports/scan_*.html`: HTML reports.
@@ -268,6 +272,9 @@ AgentiAI/
 4. Continuous learning through reward loops and persistent memory.
 5. Resume support via checkpointing.
 6. Real-time observability through TUI logs and SSE streams.
+7. Findings and coverage are separate facts. Evidence states are `observed`, `suspected`, `confirmed`, `refuted`, `unresolved`, and `not_tested`; coverage states are `tested`, `not_applicable`, `blocked`, `deferred`, `failed`, and `not_tested`.
+8. “No finding” never implies complete testing. Reports preserve decision reasons, policy identity, skipped work, failures, and unresolved outcomes.
+9. Checkpoint resume fails closed on target or policy drift. Corrupt active state may be restored only from a valid checksummed backup, and ambiguous non-idempotent work requires human review.
 
 ## 10. Extension Points
 

@@ -8,7 +8,8 @@ from datetime import datetime
 from typing import List
 
 from config.settings import OUTPUT_DIR, SEVERITY_ORDER, Severity
-from core.models import Finding, ScanState
+from core.evidence import Redactor
+from core.models import CoverageStatus, EvidenceStatus, Finding, ScanState
 
 
 SEVERITY_EMOJI = {
@@ -31,15 +32,40 @@ SEVERITY_COLORS = {
 class Reporter:
     def __init__(self, output_dir: str = OUTPUT_DIR):
         self.output_dir = output_dir
+        self.redactor = Redactor()
         os.makedirs(output_dir, exist_ok=True)
+
+    @staticmethod
+    def _evidence_counts(state: ScanState) -> dict:
+        return {
+            status.value: sum(
+                1 for finding in state.findings
+                if finding.evidence_status is status
+            )
+            for status in EvidenceStatus
+        }
+
+    @staticmethod
+    def _coverage_counts(state: ScanState) -> dict:
+        return {
+            status.value: sum(
+                1 for record in state.coverage if record.status is status
+            )
+            for status in CoverageStatus
+        }
 
     def generate_markdown(self, state: ScanState, executive_summary: str = "") -> str:
         confirmed = [f for f in state.findings if f.confirmed]
+        evidence_order = {status: index for index, status in enumerate(EvidenceStatus)}
         all_findings = sorted(
             state.findings,
-            key=lambda f: SEVERITY_ORDER.get(f.severity, 0),
-            reverse=True,
+            key=lambda f: (
+                evidence_order.get(f.evidence_status, len(evidence_order)),
+                -SEVERITY_ORDER.get(f.severity, 0),
+            ),
         )
+        evidence_counts = self._evidence_counts(state)
+        coverage_counts = self._coverage_counts(state)
 
         lines = [
             f"# Bug Bounty Scan Report",
@@ -71,6 +97,20 @@ class Reporter:
             f"| Medium | {sum(1 for f in confirmed if f.severity == Severity.MEDIUM)} |",
             f"| Low | {sum(1 for f in confirmed if f.severity == Severity.LOW)} |",
             f"",
+            f"## Evidence Status Summary",
+            f"",
+            *[
+                f"- {status.value.replace('_', ' ').title()}: {evidence_counts[status.value]}"
+                for status in EvidenceStatus
+            ],
+            f"",
+            f"## Coverage Summary",
+            f"",
+            *[
+                f"- {status.value.replace('_', ' ').title()}: {coverage_counts[status.value]}"
+                for status in CoverageStatus
+            ],
+            f"",
             f"---",
             f"",
             f"## Technologies Detected",
@@ -83,8 +123,15 @@ class Reporter:
             f"",
         ]
 
+        current_evidence_status = None
         for i, f in enumerate(all_findings, 1):
-            status = "✅ CONFIRMED" if f.confirmed else "⚠️ UNCONFIRMED"
+            if f.evidence_status is not current_evidence_status:
+                current_evidence_status = f.evidence_status
+                lines += [
+                    f"## {f.evidence_status.value.replace('_', ' ').title()} Findings",
+                    "",
+                ]
+            status = f.evidence_status.value.upper().replace("_", " ")
             emoji = SEVERITY_EMOJI.get(f.severity, "⚪")
             lines += [
                 f"### {i}. {emoji} {f.title}",
@@ -130,14 +177,28 @@ class Reporter:
                 lines.append(f"- {err}")
             lines.append("")
 
+        lines += ["## Coverage Details", ""]
+        for record in state.coverage:
+            lines.append(
+                f"- **{record.module}** - {record.status.value}: "
+                f"{record.reason or 'No reason recorded'}"
+            )
+
+        lines += ["", "## Decision Journal", ""]
+        for decision in state.decisions:
+            lines.append(
+                f"- {decision.outcome.value}: {decision.reason} "
+                f"(policy `{decision.policy_snapshot_hash or state.policy_snapshot_hash}`)"
+            )
+
         lines += ["## Agent Reasoning Log", ""]
         for thought in state.agent_thoughts:
             lines.append(f"- {thought}")
 
-        return "\n".join(lines)
+        return self.redactor.redact_text("\n".join(lines))
 
     def generate_json(self, state: ScanState, executive_summary: str = "") -> dict:
-        return {
+        report = {
             "scan_id": state.scan_id,
             "target": state.target.url,
             "started_at": state.started_at.isoformat(),
@@ -149,15 +210,31 @@ class Reporter:
             "findings": [f.to_dict() for f in state.findings],
             "errors": state.errors,
             "modules_run": state.modules_run,
+            "policy_snapshot_hash": state.policy_snapshot_hash,
+            "evidence_counts": self._evidence_counts(state),
+            "coverage_counts": self._coverage_counts(state),
+            "findings_by_evidence_status": {
+                status.value: [
+                    finding.to_dict() for finding in state.findings
+                    if finding.evidence_status is status
+                ]
+                for status in EvidenceStatus
+            },
+            "coverage": [record.to_dict() for record in state.coverage],
+            "decisions": [decision.to_dict() for decision in state.decisions],
         }
+        return self.redactor.redact(report)
 
     def generate_html(self, state: ScanState, executive_summary: str = "") -> str:
         """Generate a styled HTML report."""
         confirmed = [f for f in state.findings if f.confirmed]
+        evidence_order = {status: index for index, status in enumerate(EvidenceStatus)}
         all_findings = sorted(
             state.findings,
-            key=lambda f: SEVERITY_ORDER.get(f.severity, 0),
-            reverse=True,
+            key=lambda f: (
+                evidence_order.get(f.evidence_status, len(evidence_order)),
+                -SEVERITY_ORDER.get(f.severity, 0),
+            ),
         )
         stats = state.stats()
 
@@ -165,8 +242,16 @@ class Reporter:
         sev_counts = stats.get("by_severity", {})
 
         findings_html = ""
+        current_evidence_status = None
         for i, f in enumerate(all_findings, 1):
-            status = "CONFIRMED ✅" if f.confirmed else "UNCONFIRMED ⚠️"
+            if f.evidence_status is not current_evidence_status:
+                current_evidence_status = f.evidence_status
+                findings_html += (
+                    f'<h3 class="evidence-group" '
+                    f'data-evidence-status="{f.evidence_status.value}">'
+                    f'{f.evidence_status.value.replace("_", " ").title()}</h3>'
+                )
+            status = f.evidence_status.value.upper().replace("_", " ")
             color = SEVERITY_COLORS.get(f.severity, "#95a5a6")
             poc_html = ""
             if f.poc_steps:
@@ -196,7 +281,23 @@ class Reporter:
                 </div>
             </div>"""
 
-        return f"""<!DOCTYPE html>
+        coverage_html = "".join(
+            "<tr>"
+            f"<td>{_esc(record.module)}</td>"
+            f"<td>{record.status.value}</td>"
+            f"<td>{_esc(record.reason)}</td>"
+            "</tr>"
+            for record in state.coverage
+        )
+        decision_html = "".join(
+            "<li>"
+            f"{decision.outcome.value}: {_esc(decision.reason)} "
+            f"(policy {_esc(decision.policy_snapshot_hash or state.policy_snapshot_hash)})"
+            "</li>"
+            for decision in state.decisions
+        )
+
+        rendered = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -273,8 +374,16 @@ pre {{ padding: 1rem; margin: 0.5rem 0; overflow-x: auto; display: block; }}
 <h2>🚨 Findings ({len(all_findings)})</h2>
 {findings_html}
 
+<h2>Coverage</h2>
+<table><thead><tr><th>Module</th><th>Status</th><th>Reason</th></tr></thead>
+<tbody>{coverage_html}</tbody></table>
+
+<h2>Decision Journal</h2>
+<ul>{decision_html}</ul>
+
 </body>
 </html>"""
+        return self.redactor.redact_text(rendered)
 
     def save(self, state: ScanState, executive_summary: str = "") -> tuple[str, str]:
         """Save Markdown, JSON, and HTML reports. Returns (md_path, json_path)."""

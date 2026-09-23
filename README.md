@@ -12,12 +12,12 @@ Important legal notice: Running this tool against systems without explicit writt
 
 * Autonomous multi-stage scan pipeline: pre-engagement -> recon -> strategy -> scan -> validate -> reflect
 * RL-driven adaptive module selection and reward-based learning across scans
-* Multi-module vulnerability coverage (SQLi, XSS, SSRF, XXE, IDOR, CSRF, misconfig, and more)
+* 25 registered scanner modules covering injection, authorization, authentication, files, configuration, transport, and reconnaissance checks
 * Policy, scope, and safety enforcement before and during active testing
 * Real-time dashboard with live logs, findings stream, and scan progress
 * API-first architecture with FastAPI endpoints and SSE streaming
-* Automated report generation in Markdown, JSON, and HTML formats
-* Checkpoint/resume support for long-running scans
+* Evidence-calibrated Markdown, JSON, and HTML reports with separate confirmed, suspected, unresolved, refuted, and coverage states
+* Checksummed, versioned checkpoints with last-known-good recovery and policy-drift protection
 
 ## Tech Stack
 
@@ -98,12 +98,20 @@ Run dashboard:
 cd dashboard
 npm run dev
 
-Run CLI scan:
+Run a CLI scan only against a locally controlled or explicitly authorized target, with a current policy profile:
 
-python main.py --target http://testphp.vulnweb.com --yes --no-tui
+python main.py --target http://127.0.0.1:8000 --policy policies/authorized-local.json --yes --no-tui
 
 Open in browser:
 http://localhost:5173
+
+## Evidence and coverage meanings
+
+Findings use explicit evidence states: `observed`, `suspected`, `confirmed`, `refuted`, `unresolved`, and `not_tested`. A finding is not considered confirmed merely because a response changed; confirmation requires the scanner's declared validator evidence and controls.
+
+Coverage is reported independently as `tested`, `not_applicable`, `blocked`, `deferred`, `failed`, or `not_tested`. “No finding” is not proof that a vulnerability class was fully tested. Reports include the decision reason and policy snapshot hash, while secret-bearing values are redacted before serialization.
+
+Interrupted scans are stored under `reports/checkpoints/<scan-id>/checkpoint.json`. Resume accepts only a matching target and policy snapshot. A corrupt active checkpoint may recover from the newest valid checksummed backup. An unfinished non-idempotent action is escalated for human review and is never replayed automatically.
 
 ## API Endpoints (Optional for backend projects)
 

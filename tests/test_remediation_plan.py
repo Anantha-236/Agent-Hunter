@@ -6,6 +6,11 @@ import pytest
 import api_server
 import core.orchestrator as orchestrator_module
 from core.models import Scope, Target
+from core.scanner_capabilities import (
+    CapabilityRegistry,
+    ScannerCapability,
+    TrafficClass,
+)
 from recon import asset_discovery as asset_discovery_module
 from recon.asset_discovery import AssetDiscovery, DiscoveredPort
 
@@ -171,13 +176,32 @@ def _make_orchestrator(monkeypatch, tmp_path, modules=None, checkpoint_name="sca
         "CHECKPOINT_FILE",
         str(tmp_path / checkpoint_name),
     )
+    selected_modules = modules or ["module-a"]
+    capabilities = CapabilityRegistry({
+        name: ScannerCapability(
+            module=name,
+            version="test",
+            traffic_class=TrafficClass.SAFE_ACTIVE,
+            request_cost=1,
+            max_concurrency=1,
+            required_permissions=(),
+            positive_controls=("test-positive",),
+            negative_controls=("test-negative",),
+            fallback_module=None,
+            idempotent=True,
+        )
+        for name in selected_modules
+    })
     return orchestrator_module.Orchestrator(
         target=Target(url="https://example.com", scope=Scope(allowed_domains=["example.com"])),
-        modules=modules or ["module-a"],
+        modules=selected_modules,
         use_ai=False,
         use_tui=False,
         use_memory=False,
         auto_confirm=True,
+        checkpoint_root=tmp_path,
+        capability_registry=capabilities,
+        policy_snapshot_hash="test-policy-v1",
     )
 
 
@@ -210,7 +234,7 @@ def test_orchestrator_keeps_failed_checkpoint(monkeypatch, tmp_path):
 
     assert state.phase == "failed"
     assert state.errors == ["boom"]
-    assert (tmp_path / "failed-checkpoint.json").exists()
+    assert orchestrator.checkpoint_path_for(state.scan_id).exists()
 
 
 def test_orchestrator_consumes_modules_pending_during_scan(monkeypatch, tmp_path):
