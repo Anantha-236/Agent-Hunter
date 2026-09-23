@@ -200,6 +200,24 @@ class VulnHandler(BaseHTTPRequestHandler):
         if path == "/graphql":
             return self._json('{"errors":[{"message":"Must provide query string."}]}')
 
+        # ── Passive OpenAPI discovery ─────────────────────────
+        if path == "/openapi.json":
+            return self._json(json.dumps({
+                "openapi": "3.0.3",
+                "servers": [{"url": "/api"}],
+                "paths": {
+                    "/users/{id}": {
+                        "get": {
+                            "parameters": [
+                                {"name": "id", "in": "path", "required": True},
+                                {"name": "expand", "in": "query"},
+                            ],
+                            "responses": {"200": {"description": "ok"}},
+                        }
+                    }
+                },
+            }))
+
         # ── Race condition endpoint ──────────────────────────
         if path == "/coupon/apply":
             return self._coupon_response()

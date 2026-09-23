@@ -89,6 +89,7 @@ _DEFAULT_CAPABILITIES = {
     "open_redirect": _capability("open_redirect", TrafficClass.SAFE_ACTIVE, 20),
     "subdomain_takeover": _capability("subdomain_takeover", TrafficClass.PASSIVE, 1),
     "ssl_tls_scanner": _capability("ssl_tls_scanner", TrafficClass.PASSIVE, 2),
+    "openapi_scanner": _capability("openapi_scanner", TrafficClass.PASSIVE, 5),
     "csrf_scanner": _capability("csrf_scanner", TrafficClass.STATE_CHANGING, 10, permissions=("reversible_state_change",), idempotent=False),
     "host_header": _capability("host_header", TrafficClass.SAFE_ACTIVE, 10),
     "xxe_scanner": _capability("xxe_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("xml_parser_testing",)),

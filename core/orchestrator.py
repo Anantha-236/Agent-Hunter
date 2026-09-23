@@ -72,6 +72,7 @@ SCANNER_REGISTRY = {
     "open_redirect":       ("scanners.redirect.open_redirect",       "OpenRedirectScanner"),
     "subdomain_takeover":  ("scanners.recon.subdomain_takeover",     "SubdomainTakeoverScanner"),
     "ssl_tls_scanner":     ("scanners.recon.ssl_tls_scanner",        "SSLTLSScanner"),
+    "openapi_scanner":     ("scanners.recon.openapi_scanner",        "OpenAPIScanner"),
     "csrf_scanner":        ("scanners.auth.csrf_scanner",            "CSRFScanner"),
     "host_header":         ("scanners.misconfig.host_header",        "HostHeaderScanner"),
     "xxe_scanner":         ("scanners.injection.xxe_scanner",        "XXEScanner"),

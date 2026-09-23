@@ -115,6 +115,16 @@ SCAN_TIMEOUT_PER_MODULE: int = 300
 OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "./reports")
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", os.getenv("AGENT_LOG_LEVEL", "INFO"))
 
+# Passive OpenAPI discovery limits.  Documents are inventory only; operations
+# are never executed automatically.
+OPENAPI_SPEC_PATHS = (
+    "/openapi.json", "/openapi.yaml", "/openapi.yml",
+    "/swagger.json", "/v3/api-docs",
+)
+OPENAPI_MAX_PROBES: int = len(OPENAPI_SPEC_PATHS)
+OPENAPI_MAX_DOCUMENT_BYTES: int = 1_048_576
+OPENAPI_MAX_DEPTH: int = 40
+
 # ── Outbound report email (secrets are read only by integrations/email) ──
 SMTP_DEFAULT_PORT: int = 587
 SMTP_DEFAULT_MAX_ATTACHMENT_BYTES: int = 5 * 1024 * 1024
@@ -133,7 +143,7 @@ SEVERITY_ORDER = {
 
 ENABLED_MODULES: List[str] = [
     "sql_injection", "ssti", "crlf_injection", "command_injection", "xxe_scanner",
-    "xss_scanner", "ssrf", "graphql_scanner",
+    "xss_scanner", "ssrf", "openapi_scanner", "graphql_scanner",
     "auth_scanner", "jwt_scanner", "rate_limit_scanner",
     "idor_scanner", "broken_access_control", "csrf_scanner", "race_condition",
     "path_traversal", "lfi_rfi_scanner",

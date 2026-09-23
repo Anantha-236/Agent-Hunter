@@ -52,6 +52,7 @@ EXPECTED_TYPES = {
     "open_redirect": ("open_redirect",),
     "subdomain_takeover": ("subdomain_takeover",),
     "ssl_tls_scanner": ("tls_missing_https",),
+    "openapi_scanner": (),
     "csrf_scanner": ("csrf",),
     "host_header": ("host_header", "password_reset_poisoning"),
     "xxe_scanner": ("xxe",),
@@ -69,6 +70,7 @@ MAX_REQUESTS = {
     "cors_scanner": 4, "header_security": 2,
     "sensitive_data_exposure": 14, "open_redirect": 90,
     "subdomain_takeover": 2, "ssl_tls_scanner": 2, "csrf_scanner": 3,
+    "openapi_scanner": 5,
     "host_header": 30, "xxe_scanner": 30, "race_condition": 22,
     "command_injection": 120, "graphql_scanner": 20,
 }
@@ -223,10 +225,15 @@ def test_scanner_paired_calibration(module, paired_servers, monkeypatch):
     )
     safe_findings, safe_requests = asyncio.run(_run_case(case.module, case.safe_url))
 
-    assert any(
-        _matches(finding.vuln_type, case.expected_types)
-        for finding in vulnerable_findings
-    ), f"{module} missed {case.expected_types}: {[f.vuln_type for f in vulnerable_findings]}"
+    if case.expected_types:
+        assert any(
+            _matches(finding.vuln_type, case.expected_types)
+            for finding in vulnerable_findings
+        ), f"{module} missed {case.expected_types}: {[f.vuln_type for f in vulnerable_findings]}"
+    else:
+        # Discovery-only scanners produce coverage candidates, never
+        # vulnerability findings.
+        assert vulnerable_findings == []
     assert not any(
         _matches(finding.vuln_type, case.expected_types)
         for finding in safe_findings
