@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 from core.pre_engagement import PreEngagementChecklist, PreEngagementGate, PreEngagementResult
+from core.scanner_capabilities import CapabilityError, CapabilityRegistry, TrafficClass
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,16 @@ class BBPPolicy:
     rate_limit_rps: float = 5.0       # Max requests per second
     testing_hours: str = ""           # e.g., "Only during business hours EST"
     require_2fa_test_account: bool = False
+    allowed_traffic_classes: List[str] = field(
+        default_factory=lambda: [
+            TrafficClass.PASSIVE.value,
+            TrafficClass.SAFE_ACTIVE.value,
+        ]
+    )
+    granted_permissions: List[str] = field(default_factory=list)
+    max_request_budget: int = 1000
+    policy_fresh: bool = True
+    policy_snapshot_hash: str = ""
 
     # ── Specific Instructions ──
     special_instructions: List[str] = field(default_factory=list)
@@ -108,6 +119,11 @@ class BBPPolicy:
             "no_automated_mass_scan": self.no_automated_mass_scan,
             "rate_limit_rps": self.rate_limit_rps,
             "testing_hours": self.testing_hours,
+            "allowed_traffic_classes": self.allowed_traffic_classes,
+            "granted_permissions": self.granted_permissions,
+            "max_request_budget": self.max_request_budget,
+            "policy_fresh": self.policy_fresh,
+            "policy_snapshot_hash": self.policy_snapshot_hash,
             "special_instructions": self.special_instructions,
             "safe_harbor": self.safe_harbor,
             "disclosure_policy": self.disclosure_policy,
@@ -169,8 +185,13 @@ class PolicyEnforcer:
     - DURING payload generation (restrict dangerous payloads)
     """
 
-    def __init__(self, policy: BBPPolicy):
+    def __init__(
+        self,
+        policy: BBPPolicy,
+        capability_registry: Optional[CapabilityRegistry] = None,
+    ):
         self.policy = policy
+        self.capability_registry = capability_registry or CapabilityRegistry.default()
         self.violations: List[str] = []
         self.blocked_requests: int = 0
         self.blocked_modules: List[str] = []
@@ -319,16 +340,67 @@ class PolicyEnforcer:
     def is_module_allowed(self, module_name: str) -> tuple[bool, str]:
         """Check if a scanner module is allowed by the program rules."""
 
-        # Block DoS-related scanners
-        if self.policy.no_dos and module_name in ("race_condition",):
-            # Race condition scanner sends concurrent requests — borderline DoS
-            # We allow it but log a warning
-            logger.warning(
-                f"Module '{module_name}' sends concurrent requests. "
-                f"Program has no_dos=True. Running with reduced concurrency."
+        try:
+            capability = self.capability_registry.require(module_name)
+        except CapabilityError as exc:
+            return self._block_module(module_name, str(exc))
+
+        if not self.policy.policy_fresh:
+            return self._block_module(module_name, "Program policy snapshot is stale")
+
+        if capability.traffic_class.value not in set(self.policy.allowed_traffic_classes):
+            return self._block_module(
+                module_name,
+                f"Traffic class '{capability.traffic_class.value}' is not allowed",
+            )
+
+        if self.policy.no_dos and capability.traffic_class is TrafficClass.DISRUPTIVE:
+            return self._block_module(
+                module_name,
+                f"Disruptive module '{module_name}' is blocked by no_dos policy",
+            )
+
+        if (
+            self.policy.no_data_modification
+            and capability.traffic_class is TrafficClass.STATE_CHANGING
+        ):
+            return self._block_module(
+                module_name,
+                f"State-changing module '{module_name}' is blocked",
+            )
+
+        if (
+            self.policy.no_automated_mass_scan
+            and capability.traffic_class is not TrafficClass.PASSIVE
+        ):
+            return self._block_module(
+                module_name,
+                "Program prohibits automated active scanning",
+            )
+
+        missing_permissions = set(capability.required_permissions).difference(
+            self.policy.granted_permissions
+        )
+        if missing_permissions:
+            return self._block_module(
+                module_name,
+                "Missing scanner permissions: " + ", ".join(sorted(missing_permissions)),
+            )
+
+        if capability.request_cost > self.policy.max_request_budget:
+            return self._block_module(
+                module_name,
+                f"Scanner request cost {capability.request_cost} exceeds "
+                f"remaining budget {self.policy.max_request_budget}",
             )
 
         return True, "OK"
+
+    def _block_module(self, module_name: str, reason: str) -> tuple[bool, str]:
+        if module_name not in self.blocked_modules:
+            self.blocked_modules.append(module_name)
+        self._record_violation(reason)
+        return False, reason
 
     # ── Vuln Type Check ───────────────────────────────────────
 

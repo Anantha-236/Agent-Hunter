@@ -7,14 +7,22 @@ from core.models import Finding, ScanState
 from utils.http_client import HttpClient
 
 if TYPE_CHECKING:
+    from core.bbp_policy import PolicyEnforcer
+    from core.scanner_capabilities import ScannerCapability
     from core.waf_engine import WAFEngine
     from core.payload_engine import AdaptivePayloadEngine
+
+
+class ScannerPolicyDenied(PermissionError):
+    """Raised when deterministic policy prevents scanner execution."""
+
 
 class BaseScanner(ABC):
     name: str = "base"
     description: str = ""
     severity_baseline: str = "medium"
     tags: List[str] = []
+    capability: Optional["ScannerCapability"] = None
 
     def __init__(self, client: HttpClient):
         self.client = client
@@ -30,6 +38,20 @@ class BaseScanner(ABC):
 
     async def setup(self) -> None: pass
     async def teardown(self) -> None: pass
+
+    async def execute(
+        self,
+        state: ScanState,
+        policy_enforcer: Optional["PolicyEnforcer"] = None,
+    ) -> List[Finding]:
+        """Run only after the module-level deterministic policy gate passes."""
+        if policy_enforcer is not None:
+            allowed, reason = policy_enforcer.is_module_allowed(self.name)
+            if not allowed:
+                raise ScannerPolicyDenied(
+                    f"scanner {self.name!r} denied by policy: {reason}"
+                )
+        return await self.run(state)
 
     def make_finding(self, **kwargs) -> Finding:
         f = Finding(**kwargs)

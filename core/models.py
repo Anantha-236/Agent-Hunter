@@ -117,14 +117,28 @@ class Scope:
     excluded_paths: List[str] = field(default_factory=list)
 
     @staticmethod
+    def _normalize_host(host: str) -> str:
+        candidate = (host or "").strip().rstrip(".").lower()
+        if not candidate:
+            return ""
+        try:
+            return candidate.encode("idna").decode("ascii")
+        except UnicodeError:
+            return ""
+
+    @staticmethod
     def _matches_pattern(value: str, pattern: str) -> bool:
         if not pattern:
             return False
-        rule = pattern.strip()
+        candidate = Scope._normalize_host(value)
+        rule = pattern.strip().lower().rstrip(".")
         if rule.startswith("re:"):
-            return bool(re.fullmatch(rule[3:], value))
-        wildcard = re.escape(rule).replace(r"\*", ".*")
-        return bool(re.fullmatch(wildcard, value))
+            return bool(re.fullmatch(rule[3:], candidate))
+        if rule.startswith("*."):
+            suffix = Scope._normalize_host(rule[2:])
+            return bool(suffix) and candidate.endswith(f".{suffix}")
+        normalized_rule = Scope._normalize_host(rule)
+        return bool(normalized_rule) and candidate == normalized_rule
 
     @staticmethod
     def _normalize_url(url: str):
@@ -133,7 +147,7 @@ class Scope:
             candidate = f"https://{candidate}"
         parsed = urlparse(candidate)
         scheme = parsed.scheme or "https"
-        host = (parsed.hostname or "").lower()
+        host = Scope._normalize_host(parsed.hostname or "")
         default_port = 443 if scheme == "https" else 80
         port = parsed.port or default_port
         path = parsed.path or "/"
@@ -165,7 +179,7 @@ class Scope:
         return host == allowed_host
 
     def is_host_in_scope(self, host: str) -> bool:
-        candidate_host = (host or "").lower()
+        candidate_host = self._normalize_host(host)
         if not candidate_host:
             return False
 
