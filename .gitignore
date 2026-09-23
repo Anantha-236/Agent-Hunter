@@ -42,3 +42,6 @@ skills-lock.json
 
 # Temp / waste files
 temp/
+
+# Isolated implementation worktrees
+.worktrees/
