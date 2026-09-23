@@ -76,6 +76,7 @@ _DEFAULT_CAPABILITIES = {
     "xss_scanner": _capability("xss_scanner", TrafficClass.SAFE_ACTIVE, 60),
     "ssrf": _capability("ssrf", TrafficClass.SAFE_ACTIVE, 30, permissions=("internal_address_probes",)),
     "auth_scanner": _capability("auth_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("test_account_auth",)),
+    "oauth_oidc_scanner": _capability("oauth_oidc_scanner", TrafficClass.PASSIVE, 2),
     "jwt_scanner": _capability("jwt_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("synthetic_token_testing",)),
     "rate_limit_scanner": _capability("rate_limit_scanner", TrafficClass.DISRUPTIVE, 50, max_concurrency=1, permissions=("rate_limit_testing",)),
     "idor_scanner": _capability("idor_scanner", TrafficClass.SAFE_ACTIVE, 30, permissions=("test_identity_access",)),

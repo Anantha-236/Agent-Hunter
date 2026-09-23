@@ -59,6 +59,7 @@ SCANNER_REGISTRY = {
     "xss_scanner":         ("scanners.xss.xss_scanner",             "XSSScanner"),
     "ssrf":                ("scanners.ssrf.ssrf_scanner",            "SSRFScanner"),
     "auth_scanner":        ("scanners.auth.auth_scanner",            "AuthScanner"),
+    "oauth_oidc_scanner":  ("scanners.auth.oauth_oidc_scanner",      "OAuthOIDCScanner"),
     "jwt_scanner":         ("scanners.auth.jwt_scanner",             "JWTScanner"),
     "rate_limit_scanner":  ("scanners.auth.rate_limit_scanner",      "RateLimitScanner"),
     "idor_scanner":        ("scanners.authz.idor_scanner",           "IDORScanner"),

@@ -125,6 +125,12 @@ OPENAPI_MAX_PROBES: int = len(OPENAPI_SPEC_PATHS)
 OPENAPI_MAX_DOCUMENT_BYTES: int = 1_048_576
 OPENAPI_MAX_DEPTH: int = 40
 
+OAUTH_METADATA_PATHS = (
+    "/.well-known/openid-configuration",
+    "/.well-known/oauth-authorization-server",
+)
+OAUTH_METADATA_MAX_BYTES: int = 262_144
+
 # ── Outbound report email (secrets are read only by integrations/email) ──
 SMTP_DEFAULT_PORT: int = 587
 SMTP_DEFAULT_MAX_ATTACHMENT_BYTES: int = 5 * 1024 * 1024
@@ -144,7 +150,7 @@ SEVERITY_ORDER = {
 ENABLED_MODULES: List[str] = [
     "sql_injection", "ssti", "crlf_injection", "command_injection", "xxe_scanner",
     "xss_scanner", "ssrf", "openapi_scanner", "graphql_scanner",
-    "auth_scanner", "jwt_scanner", "rate_limit_scanner",
+    "auth_scanner", "oauth_oidc_scanner", "jwt_scanner", "rate_limit_scanner",
     "idor_scanner", "bola_scanner", "mass_assignment_scanner",
     "broken_access_control", "csrf_scanner", "race_condition",
     "path_traversal", "lfi_rfi_scanner",

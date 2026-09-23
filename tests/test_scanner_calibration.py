@@ -39,6 +39,7 @@ EXPECTED_TYPES = {
     "xss_scanner": ("reflected_xss",),
     "ssrf": ("ssrf",),
     "auth_scanner": ("default_credentials", "jwt_alg_none"),
+    "oauth_oidc_scanner": (),
     "jwt_scanner": ("jwt_weak_secret",),
     "rate_limit_scanner": ("rate_limit_missing",),
     "idor_scanner": ("idor",),
@@ -66,6 +67,7 @@ EXPECTED_TYPES = {
 MAX_REQUESTS = {
     "sql_injection": 220, "ssti": 100, "crlf_injection": 35,
     "xss_scanner": 120, "ssrf": 100, "auth_scanner": 30,
+    "oauth_oidc_scanner": 2,
     "jwt_scanner": 5, "rate_limit_scanner": 10, "idor_scanner": 40,
     "bola_scanner": 20, "mass_assignment_scanner": 6,
     "broken_access_control": 20, "path_traversal": 70,
