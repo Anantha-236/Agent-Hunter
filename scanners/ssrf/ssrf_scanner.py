@@ -270,7 +270,14 @@ class SSRFScanner(BaseScanner):
                 continue
             body = resp.text
             for marker in markers:
-                m = re.search(marker, body, re.IGNORECASE)
+                # Most scheme markers are literal response fragments.  Treat
+                # only the explicitly regex-shaped root marker as a regex so
+                # strings such as ``[fonts]`` cannot become a character class.
+                if ".*" in marker:
+                    m = re.search(marker, body, re.IGNORECASE)
+                else:
+                    index = body.lower().find(marker.lower())
+                    m = re.search(re.escape(marker), body, re.IGNORECASE) if index >= 0 else None
                 if m:
                     findings.append(self.make_finding(
                         title=f"SSRF via {scheme_name} in '{param}'",

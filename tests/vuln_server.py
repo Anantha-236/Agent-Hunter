@@ -9,6 +9,9 @@ import json
 import time
 import threading
 import asyncio
+import base64
+import hashlib
+import hmac
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -18,6 +21,9 @@ VULN_PORT = 18943  # high port to avoid conflicts
 
 class VulnHandler(BaseHTTPRequestHandler):
     """Handler that returns intentionally-vulnerable responses."""
+
+    coupon_attempts = 0
+    coupon_lock = threading.Lock()
 
     def log_message(self, *_args):
         pass  # suppress noisy logs during tests
@@ -30,7 +36,12 @@ class VulnHandler(BaseHTTPRequestHandler):
 
         # ── Root / index ──────────────────────────────────────
         if path == "/":
-            body = self._index_page()
+            body = self._index_page().replace(
+                "</body>",
+                f'<div data-fixture-token="{self._weak_jwt()}">'
+                "There isn't a GitHub Pages site here"
+                "</div></body>",
+            )
             return self._html(body)
 
         # ── XSS: reflect param unescaped ──────────────────────
@@ -191,8 +202,7 @@ class VulnHandler(BaseHTTPRequestHandler):
 
         # ── Race condition endpoint ──────────────────────────
         if path == "/coupon/apply":
-            body = json.dumps({"status": "ok", "message": "Coupon applied", "discount": "10%"})
-            return self._json(body)
+            return self._coupon_response()
 
         # ── CSRF: form without token ─────────────────────────
         if path == "/transfer":
@@ -237,7 +247,7 @@ class VulnHandler(BaseHTTPRequestHandler):
 
         # ── Race condition ───────────────────────────────────
         if path == "/coupon/apply":
-            return self._json('{"status":"ok","message":"Coupon applied","discount":"10%"}')
+            return self._coupon_response()
 
         self._html("OK", status=200)
 
@@ -329,6 +339,25 @@ class VulnHandler(BaseHTTPRequestHandler):
         self.send_header("Location", location)
         self.end_headers()
 
+    @staticmethod
+    def _weak_jwt() -> str:
+        """Return a deterministic HS256 token signed with the weak secret ``secret``."""
+        encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+        header = encode(b'{"alg":"HS256","typ":"JWT"}')
+        payload = encode(b'{"sub":"fixture-user","role":"user"}')
+        signing_input = f"{header}.{payload}".encode()
+        signature = encode(hmac.new(b"secret", signing_input, hashlib.sha256).digest())
+        return f"{header}.{payload}.{signature}"
+
+    def _coupon_response(self):
+        """Return inconsistent outcomes to model an unsafe non-atomic operation."""
+        with self.coupon_lock:
+            type(self).coupon_attempts += 1
+            attempt = type(self).coupon_attempts
+        if attempt % 3 == 0:
+            return self._json('{"status":"conflict","message":"Already applied"}', status=409)
+        return self._json('{"status":"ok","message":"Coupon applied","discount":"10%"}')
+
     def _index_page(self) -> str:
         return """<html><head><title>Test App</title></head><body>
 <h1>Test Application</h1>
@@ -358,6 +387,7 @@ def start_vuln_server(port: int = VULN_PORT) -> str:
     global _server_instance, _server_thread
     if _server_instance is not None:
         return f"http://127.0.0.1:{port}"
+    VulnHandler.coupon_attempts = 0
 
     _server_instance = HTTPServer(("127.0.0.1", port), VulnHandler)
     _server_thread = threading.Thread(target=_server_instance.serve_forever, daemon=True)

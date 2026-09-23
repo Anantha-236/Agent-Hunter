@@ -14,6 +14,7 @@ Covers:
 """
 from __future__ import annotations
 import asyncio
+import html
 from typing import List, Optional
 from core.base_scanner import BaseScanner
 from core.models import Finding, ScanState
@@ -138,6 +139,10 @@ class SSTIScanner(BaseScanner):
         for variant in self.get_waf_bypass_variants(payload, "ssti"):
             resp, raw_req = await self.test_payload(url, method, param, variant, inject_in=inject_in)
             if resp and expected in resp.text:
+                # Reflection, including entity-escaped reflection, is the
+                # negative control; it does not prove template evaluation.
+                if variant in html.unescape(resp.text):
+                    continue
                 self.record_payload_result(variant, "ssti", success=True)
 
                 rce_payload = RCE_ESCALATION.get(engine, "")

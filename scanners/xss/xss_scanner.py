@@ -174,6 +174,13 @@ class XSSScanner(BaseScanner):
                 if variant in body:
                     self.record_payload_result(variant, "xss", success=True)
                     context = self._detect_context(body, variant)
+                    if context == "HTML body" and not any(
+                        marker in variant.lower()
+                        for marker in ("<script", "<img", "<svg", "<iframe", "<details", "<body")
+                    ):
+                        # Plain text and template-looking strings such as
+                        # ``{{7*7}}`` are not executable HTML-body controls.
+                        continue
                     findings.append(self.make_finding(
                         title=f"Reflected XSS in '{param}' ({context} context)",
                         vuln_type="reflected_xss", severity=Severity.HIGH,
@@ -347,11 +354,7 @@ class XSSScanner(BaseScanner):
         idx = body.find(canary)
         if idx < 0:
             return ""
-        context = body[max(0, idx - 100):idx + 100]
-        if "&lt;" in context or "&gt;" in context:
-            return "HTML entity encoded (<> → &lt;&gt;)"
-        if "&#" in context:
-            return "Numeric entity encoded"
-        if "%3C" in context or "%3c" in context:
-            return "URL encoded"
+        # A reflected canary, including one inside HTML/entity/URL encoding,
+        # does not establish browser-executable script.  Keep this control
+        # negative until a context-specific validator demonstrates execution.
         return ""

@@ -106,7 +106,11 @@ class SubdomainTakeoverScanner(BaseScanner):
         try:
             resp, raw_req = await self.client.get(url)
         except Exception:
-            # Try HTTP if HTTPS fails
+            resp = None
+        if resp is None:
+            # A transport client may report an exhausted HTTPS attempt as a
+            # null response rather than raising.  Preserve the bounded HTTP
+            # fallback in either representation.
             try:
                 url = f"http://{hostname}"
                 resp, raw_req = await self.client.get(url)
