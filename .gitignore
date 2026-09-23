@@ -31,6 +31,12 @@ Thumbs.db
 reports/
 data/*.db
 
+# Recoverable state generations
+reports/checkpoints/
+reports/outbox/
+*.tmp.*
+*.bak.*
+
 # Local environment files
 .env
 .env.local
