@@ -63,15 +63,23 @@ class HttpClient:
         self.evidence_manifest = evidence_manifest
 
     async def __aenter__(self):
+        async def enforce_redirect_scope(request: httpx.Request) -> None:
+            # httpx creates a fresh request for every redirect hop. Checking
+            # those requests here prevents an in-scope endpoint from bouncing
+            # the client to an unapproved host, port, or path.
+            self._check_scope(str(request.url))
+
         kwargs = dict(
             headers=self._session_headers, cookies=self._cookies,
             timeout=self._timeout, verify=self._verify_ssl,
             follow_redirects=self._follow_redirects,
+            event_hooks={"request": [enforce_redirect_scope]},
         )
         no_redir_kwargs = dict(
             headers=self._session_headers, cookies=self._cookies,
             timeout=self._timeout, verify=self._verify_ssl,
             follow_redirects=False,
+            event_hooks={"request": [enforce_redirect_scope]},
         )
         if self._proxy:
             kwargs["proxy"] = self._proxy
