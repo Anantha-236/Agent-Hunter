@@ -21,6 +21,9 @@ from core.rl_agent import RLPolicyAgent
 from interaction.base import InteractionMode
 from interaction.manager import InteractionManager
 from reporting.reporter import Reporter
+from integrations.email.client import SmtpClient
+from integrations.email.config import SmtpSettings
+from integrations.email.outbox import EmailOutbox
 
 
 def load_local_env() -> None:
@@ -230,7 +233,35 @@ Interactive modes:
                         help="Run Hunter as a Telegram bot using TELEGRAM_BOT_TOKEN")
     parser.add_argument("--telegram-poll-interval", type=float, default=1.0,
                         help="Telegram polling backoff in seconds when idle")
+    parser.add_argument(
+        "--email-report",
+        action="store_true",
+        help="Explicitly queue and send the generated redacted JSON report",
+    )
+    parser.add_argument(
+        "--retry-email-outbox",
+        action="store_true",
+        help="Retry due outbound report messages and exit (never reads email)",
+    )
     return parser.parse_args()
+
+
+def _build_email_outbox(output_dir: str) -> EmailOutbox:
+    settings = SmtpSettings.from_env(required=True)
+    return EmailOutbox(
+        os.path.join(output_dir, "outbox"),
+        settings,
+        SmtpClient(settings),
+    )
+
+
+def email_report_artifact(report_path, *, recipients=None, outbox=None):
+    """Explicit outbound handoff; ordinary report generation never calls this."""
+    selected_outbox = outbox or _build_email_outbox(OUTPUT_DIR)
+    if recipients is None:
+        recipients = selected_outbox.settings.report_to
+    item = selected_outbox.enqueue(report_path, recipients)
+    return selected_outbox.deliver(item.item_id)
 
 
 async def main():
@@ -238,6 +269,17 @@ async def main():
     args = parse_args()
     setup_logging(args.log_level)
     logger = logging.getLogger("agent")
+
+    if args.email_report and args.retry_email_outbox:
+        logger.error("Choose either --email-report or --retry-email-outbox, not both")
+        return 1
+
+    if args.retry_email_outbox:
+        from datetime import UTC, datetime
+        outbox = _build_email_outbox(args.output_dir)
+        states = outbox.retry_due(datetime.now(UTC))
+        print(f"Email outbox retry complete: {len(states)} item(s) processed")
+        return 0
 
     # ── Handle health check ──────────────────────────────────
     if args.health_check:
@@ -447,6 +489,13 @@ async def main():
         # Save reports
         reporter = Reporter(args.output_dir)
         md_path, json_path = reporter.save(state, executive_summary)
+
+        if args.email_report:
+            delivery = email_report_artifact(
+                json_path,
+                outbox=_build_email_outbox(args.output_dir),
+            )
+            print(f"   Email      : {delivery.status.value} ({delivery.item_id})")
 
         # NOTE: HackerOne integration removed — Hunter operates independently
 

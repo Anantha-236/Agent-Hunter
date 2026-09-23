@@ -12,17 +12,21 @@ import json
 import logging
 import os
 import uuid
+import hmac
 from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config.settings import ENABLED_MODULES
 from core.models import Finding, Scope, Target
+from integrations.email.client import SmtpClient
+from integrations.email.config import EmailConfigError, EmailPolicyError, SmtpSettings
+from integrations.email.outbox import AttachmentRejected, EmailOutbox
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,7 @@ app.add_middleware(
 MAX_SCANS = 50
 _scans: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _recons: Dict[str, Dict[str, Any]] = {}
+_report_files: Dict[str, str] = {}
 REPORT_DIR = os.path.join(os.path.dirname(__file__), "reports")
 os.makedirs(REPORT_DIR, exist_ok=True)
 
@@ -336,7 +341,7 @@ def _build_attack_paths(stage_findings: Dict[str, List[Dict]]) -> List[Dict[str,
     return paths
 
 
-def _save_report_to_disk(scan_id: str, report: Dict[str, Any]) -> None:
+def _save_report_to_disk(scan_id: str, report: Dict[str, Any]) -> Optional[str]:
     """Persist a completed scan report to the reports directory."""
     try:
         target = (report.get("target") or "").replace("https://", "").replace("http://", "").replace("/", "_")[:40]
@@ -344,9 +349,12 @@ def _save_report_to_disk(scan_id: str, report: Dict[str, Any]) -> None:
         path = os.path.join(REPORT_DIR, filename)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, default=str)
+        _report_files[scan_id] = path
         logger.info(f"Kill chain report saved: {path}")
+        return path
     except Exception as exc:
         logger.warning(f"Failed to save report to disk: {exc}")
+        return None
 
 
 def _register_scan(scan_id: str, entry: Dict[str, Any]) -> None:
@@ -453,6 +461,11 @@ class ReconRequest(BaseModel):
     out_scope: Optional[List[str]] = None
     instructions: str = ""
 
+
+class EmailReportRequest(BaseModel):
+    recipients: Optional[List[str]] = None
+    deliver_now: bool = True
+
 # Global mutable settings (demo-grade; use a DB / config file in prod)
 _settings: Dict[str, Any] = _model_to_dict(SettingsPayload())
 
@@ -482,6 +495,32 @@ def _resolve_crawl_depth(depth: str) -> int:
         return max(1, min(int(depth_key), 10))
     except ValueError:
         return DEPTH_TO_CRAWL["medium"]
+
+
+def _build_email_outbox() -> EmailOutbox:
+    settings = SmtpSettings.from_env(required=True)
+    return EmailOutbox(
+        os.path.join(REPORT_DIR, "outbox"),
+        settings,
+        SmtpClient(settings),
+    )
+
+
+def _require_local_api_token(
+    x_agent_hunter_token: Optional[str] = Header(
+        default=None,
+        alias="X-Agent-Hunter-Token",
+    ),
+) -> None:
+    expected = os.getenv("HUNTER_LOCAL_API_TOKEN", "")
+    if not expected or not x_agent_hunter_token or not hmac.compare_digest(
+        expected, x_agent_hunter_token
+    ):
+        raise HTTPException(401, "Local authorization required")
+
+
+def _status_value(value) -> str:
+    return value.value if hasattr(value, "value") else str(value)
 
 
 def _resolve_modules(requested_modules: Optional[List[str]]) -> List[str]:
@@ -680,6 +719,42 @@ async def get_scan_report(scan_id: str):
     if scan_id not in _scans:
         raise HTTPException(404, "Scan not found")
     return _build_kill_chain_report(_scans[scan_id])
+
+
+@app.post("/api/reports/{report_id}/email")
+async def email_saved_report(
+    report_id: str,
+    request: EmailReportRequest,
+    x_agent_hunter_token: Optional[str] = Header(
+        default=None, alias="X-Agent-Hunter-Token"
+    ),
+):
+    """Explicitly queue a known local report for outbound-only delivery."""
+    _require_local_api_token(x_agent_hunter_token)
+    report_path = _report_files.get(report_id)
+    if not report_path or not os.path.isfile(report_path):
+        raise HTTPException(404, "Report not found")
+    try:
+        outbox = _build_email_outbox()
+        recipients = request.recipients
+        if recipients is None:
+            recipients = list(outbox.settings.report_to)
+        item = outbox.enqueue(report_path, recipients)
+        if request.deliver_now:
+            state = outbox.deliver(item.item_id)
+            return {
+                "item_id": state.item_id,
+                "status": _status_value(state.status),
+                "attempts": state.attempts,
+                "message_id": state.message_id,
+                "reason": state.reason,
+            }
+        return {
+            "item_id": item.item_id,
+            "status": _status_value(item.status),
+        }
+    except (EmailConfigError, EmailPolicyError, AttachmentRejected) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/scan", response_model=ScanSummary, status_code=201)
