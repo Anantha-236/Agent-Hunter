@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import List
 from core.base_scanner import BaseScanner
-from core.models import Finding, ScanState
+from core.models import EvidenceStatus, Finding, ScanState
 from config.settings import Severity
 
 INTROSPECTION_QUERY = """{"query": "{ __schema { types { name fields { name args { name type { name } } } } } }"}"""
@@ -30,6 +30,7 @@ IDOR_QUERIES = [
 DEPTH_BOMB = '{"query":"{ __schema { types { fields { type { fields { type { fields { type { name } } } } } } } } } }"}'
 
 BATCH_QUERY = '[{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"}]'
+ALIAS_QUERY = '{"query":"{ a:__typename b:__typename c:__typename d:__typename e:__typename }"}'
 
 
 class GraphQLScanner(BaseScanner):
@@ -77,6 +78,7 @@ class GraphQLScanner(BaseScanner):
             self._check_idor(graphql_url),
             self._check_dos(graphql_url),
             self._check_batch(graphql_url),
+            self._check_aliases(graphql_url),
             self._check_injection(graphql_url),
             self._check_field_suggestions(graphql_url),
         ]
@@ -108,7 +110,7 @@ class GraphQLScanner(BaseScanner):
                 return self.make_finding(
                     title="GraphQL Introspection Enabled",
                     vuln_type="graphql_introspection",
-                    severity=Severity.MEDIUM,
+                    severity=Severity.INFO,
                     url=url, parameter="__schema",
                     method="POST",
                     payload=INTROSPECTION_QUERY[:100],
@@ -118,9 +120,11 @@ class GraphQLScanner(BaseScanner):
                     cwe_id="CWE-200",
                     owasp_category="A01:2021 - Broken Access Control",
                     description=(
-                        "GraphQL introspection is enabled, exposing the entire API schema. "
-                        "Attackers can discover all queries, mutations, types, and fields."
+                        "GraphQL introspection is enabled. This is a configuration observation, "
+                        "not proof of exploitable impact."
                     ),
+                    evidence_status=EvidenceStatus.OBSERVED,
+                    confirmed=False,
                     poc_steps=[
                         f"1. Send introspection query to {url}",
                         "2. Full schema returned with all types and fields",
@@ -158,7 +162,7 @@ class GraphQLScanner(BaseScanner):
                                 findings.append(self.make_finding(
                                     title=f"GraphQL BOLA - {key} exposes {', '.join(exposed)}",
                                     vuln_type="graphql_bola",
-                                    severity=Severity.HIGH,
+                                    severity=Severity.MEDIUM,
                                     url=url, parameter=key,
                                     method="POST",
                                     payload=query_str,
@@ -167,7 +171,9 @@ class GraphQLScanner(BaseScanner):
                                     response=resp.text[:500],
                                     cwe_id="CWE-639",
                                     owasp_category="A01:2021 - Broken Access Control",
-                                    description=f"GraphQL query '{key}' exposes sensitive fields ({', '.join(exposed)}) without authorization.",
+                                    description=f"GraphQL query '{key}' returned sensitive-looking fields; two-principal authorization proof is still required.",
+                                    evidence_status=EvidenceStatus.SUSPECTED,
+                                    confirmed=False,
                                 ))
             except Exception as exc:
                 self.logger.debug(f"GraphQL IDOR check error: {exc}")
@@ -198,6 +204,8 @@ class GraphQLScanner(BaseScanner):
                     cwe_id="CWE-400",
                     owasp_category="A04:2021 - Insecure Design",
                     description="GraphQL server processes deeply nested queries without depth limiting, enabling DoS.",
+                    evidence_status=EvidenceStatus.OBSERVED,
+                    confirmed=False,
                 )
         except Exception as exc:
             self.logger.debug(f"GraphQL DoS check error: {exc}")
@@ -228,9 +236,37 @@ class GraphQLScanner(BaseScanner):
                     cwe_id="CWE-307",
                     owasp_category="A04:2021 - Insecure Design",
                     description="GraphQL accepts batched queries, enabling brute-force and amplification attacks.",
+                    evidence_status=EvidenceStatus.OBSERVED,
+                    confirmed=False,
                 )
         except Exception as exc:
             self.logger.debug(f"GraphQL batch check error: {exc}")
+        return None
+
+    async def _check_aliases(self, url: str) -> Finding | None:
+        """Use a small fixed alias control; never build an amplification bomb."""
+        try:
+            resp, raw_req = await self.client.post(
+                url, content=ALIAS_QUERY,
+                extra_headers={"Content-Type": "application/json"},
+            )
+            if not resp:
+                return None
+            data = resp.json()
+            result = data.get("data") if isinstance(data, dict) else None
+            if isinstance(result, dict) and len(result) >= 5:
+                return self.make_finding(
+                    title="GraphQL alias fan-out accepted",
+                    vuln_type="graphql_aliases",
+                    severity=Severity.LOW,
+                    url=url, method="POST", payload=ALIAS_QUERY,
+                    evidence="A bounded five-alias query was accepted.",
+                    request=raw_req,
+                    evidence_status=EvidenceStatus.OBSERVED,
+                    confirmed=False,
+                )
+        except Exception as exc:
+            self.logger.debug(f"GraphQL alias check error: {exc}")
         return None
 
     async def _check_injection(self, url: str) -> Finding | None:
@@ -260,6 +296,8 @@ class GraphQLScanner(BaseScanner):
                         cwe_id="CWE-89",
                         owasp_category="A03:2021 - Injection",
                         description="GraphQL arguments are vulnerable to SQL injection.",
+                        evidence_status=EvidenceStatus.SUSPECTED,
+                        confirmed=False,
                     )
             except Exception as exc:
                 self.logger.debug(f"GraphQL injection check error: {exc}")
@@ -291,6 +329,8 @@ class GraphQLScanner(BaseScanner):
                     cwe_id="CWE-200",
                     owasp_category="A01:2021 - Broken Access Control",
                     description="GraphQL field suggestion is enabled, leaking valid field names.",
+                    evidence_status=EvidenceStatus.OBSERVED,
+                    confirmed=False,
                 )
         except Exception as exc:
             self.logger.debug(f"GraphQL field suggestions check error: {exc}")

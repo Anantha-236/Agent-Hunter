@@ -84,6 +84,7 @@ SCANNER_REGISTRY = {
     "race_condition":      ("scanners.auth.race_condition",          "RaceConditionScanner"),
     "command_injection":   ("scanners.injection.command_injection",  "CommandInjectionScanner"),
     "graphql_scanner":     ("scanners.injection.graphql_scanner",    "GraphQLScanner"),
+    "websocket_scanner":   ("scanners.realtime.websocket_scanner",   "WebSocketScanner"),
 }
 
 CHECKPOINT_FILE = "scan_checkpoint.json"
@@ -818,7 +819,10 @@ class Orchestrator:
             self._save_checkpoint(state)
             try:
                 scanner_kwargs = {}
-                if name in {"bola_scanner", "mass_assignment_scanner", "cache_behavior_scanner"}:
+                if name in {
+                    "bola_scanner", "mass_assignment_scanner",
+                    "cache_behavior_scanner", "websocket_scanner",
+                }:
                     scanner_kwargs["identities"] = tuple(self.auth.test_identities)
                 scanner = cls(self._client, **scanner_kwargs)
             except Exception as exc:

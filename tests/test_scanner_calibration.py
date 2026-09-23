@@ -64,6 +64,7 @@ EXPECTED_TYPES = {
     "race_condition": ("race_condition",),
     "command_injection": ("command_injection",),
     "graphql_scanner": ("graphql_introspection",),
+    "websocket_scanner": (),
 }
 
 MAX_REQUESTS = {
@@ -82,6 +83,7 @@ MAX_REQUESTS = {
     "host_header": 30, "xxe_scanner": 30, "race_condition": 22,
     "cache_behavior_scanner": 10,
     "command_injection": 120, "graphql_scanner": 20,
+    "websocket_scanner": 0,
 }
 
 

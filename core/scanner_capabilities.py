@@ -107,6 +107,10 @@ _DEFAULT_CAPABILITIES = {
     "race_condition": _capability("race_condition", TrafficClass.DISRUPTIVE, 100, max_concurrency=1, permissions=("concurrency_testing",), idempotent=False),
     "command_injection": _capability("command_injection", TrafficClass.SAFE_ACTIVE, 50),
     "graphql_scanner": _capability("graphql_scanner", TrafficClass.SAFE_ACTIVE, 30),
+    "websocket_scanner": _capability(
+        "websocket_scanner", TrafficClass.SAFE_ACTIVE, 4,
+        permissions=("websocket_testing",),
+    ),
 }
 
 
