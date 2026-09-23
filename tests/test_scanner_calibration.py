@@ -40,6 +40,7 @@ EXPECTED_TYPES = {
     "ssrf": ("ssrf",),
     "auth_scanner": ("default_credentials", "jwt_alg_none"),
     "oauth_oidc_scanner": (),
+    "session_cookie_scanner": (),
     "jwt_scanner": ("jwt_weak_secret",),
     "rate_limit_scanner": ("rate_limit_missing",),
     "idor_scanner": ("idor",),
@@ -58,6 +59,7 @@ EXPECTED_TYPES = {
     "openapi_scanner": (),
     "csrf_scanner": ("csrf",),
     "host_header": ("host_header", "password_reset_poisoning"),
+    "cache_behavior_scanner": (),
     "xxe_scanner": ("xxe",),
     "race_condition": ("race_condition",),
     "command_injection": ("command_injection",),
@@ -68,6 +70,7 @@ MAX_REQUESTS = {
     "sql_injection": 220, "ssti": 100, "crlf_injection": 35,
     "xss_scanner": 120, "ssrf": 100, "auth_scanner": 30,
     "oauth_oidc_scanner": 2,
+    "session_cookie_scanner": 5,
     "jwt_scanner": 5, "rate_limit_scanner": 10, "idor_scanner": 40,
     "bola_scanner": 20, "mass_assignment_scanner": 6,
     "broken_access_control": 20, "path_traversal": 70,
@@ -77,6 +80,7 @@ MAX_REQUESTS = {
     "subdomain_takeover": 2, "ssl_tls_scanner": 2, "csrf_scanner": 3,
     "openapi_scanner": 5,
     "host_header": 30, "xxe_scanner": 30, "race_condition": 22,
+    "cache_behavior_scanner": 10,
     "command_injection": 120, "graphql_scanner": 20,
 }
 

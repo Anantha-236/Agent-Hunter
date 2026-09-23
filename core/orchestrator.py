@@ -60,6 +60,7 @@ SCANNER_REGISTRY = {
     "ssrf":                ("scanners.ssrf.ssrf_scanner",            "SSRFScanner"),
     "auth_scanner":        ("scanners.auth.auth_scanner",            "AuthScanner"),
     "oauth_oidc_scanner":  ("scanners.auth.oauth_oidc_scanner",      "OAuthOIDCScanner"),
+    "session_cookie_scanner": ("scanners.auth.session_cookie_scanner", "SessionCookieScanner"),
     "jwt_scanner":         ("scanners.auth.jwt_scanner",             "JWTScanner"),
     "rate_limit_scanner":  ("scanners.auth.rate_limit_scanner",      "RateLimitScanner"),
     "idor_scanner":        ("scanners.authz.idor_scanner",           "IDORScanner"),
@@ -78,6 +79,7 @@ SCANNER_REGISTRY = {
     "openapi_scanner":     ("scanners.recon.openapi_scanner",        "OpenAPIScanner"),
     "csrf_scanner":        ("scanners.auth.csrf_scanner",            "CSRFScanner"),
     "host_header":         ("scanners.misconfig.host_header",        "HostHeaderScanner"),
+    "cache_behavior_scanner": ("scanners.misconfig.cache_behavior_scanner", "CacheBehaviorScanner"),
     "xxe_scanner":         ("scanners.injection.xxe_scanner",        "XXEScanner"),
     "race_condition":      ("scanners.auth.race_condition",          "RaceConditionScanner"),
     "command_injection":   ("scanners.injection.command_injection",  "CommandInjectionScanner"),
@@ -816,7 +818,7 @@ class Orchestrator:
             self._save_checkpoint(state)
             try:
                 scanner_kwargs = {}
-                if name in {"bola_scanner", "mass_assignment_scanner"}:
+                if name in {"bola_scanner", "mass_assignment_scanner", "cache_behavior_scanner"}:
                     scanner_kwargs["identities"] = tuple(self.auth.test_identities)
                 scanner = cls(self._client, **scanner_kwargs)
             except Exception as exc:

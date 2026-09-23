@@ -77,6 +77,7 @@ _DEFAULT_CAPABILITIES = {
     "ssrf": _capability("ssrf", TrafficClass.SAFE_ACTIVE, 30, permissions=("internal_address_probes",)),
     "auth_scanner": _capability("auth_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("test_account_auth",)),
     "oauth_oidc_scanner": _capability("oauth_oidc_scanner", TrafficClass.PASSIVE, 2),
+    "session_cookie_scanner": _capability("session_cookie_scanner", TrafficClass.PASSIVE, 5),
     "jwt_scanner": _capability("jwt_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("synthetic_token_testing",)),
     "rate_limit_scanner": _capability("rate_limit_scanner", TrafficClass.DISRUPTIVE, 50, max_concurrency=1, permissions=("rate_limit_testing",)),
     "idor_scanner": _capability("idor_scanner", TrafficClass.SAFE_ACTIVE, 30, permissions=("test_identity_access",)),
@@ -98,6 +99,10 @@ _DEFAULT_CAPABILITIES = {
     "openapi_scanner": _capability("openapi_scanner", TrafficClass.PASSIVE, 5),
     "csrf_scanner": _capability("csrf_scanner", TrafficClass.STATE_CHANGING, 10, permissions=("reversible_state_change",), idempotent=False),
     "host_header": _capability("host_header", TrafficClass.SAFE_ACTIVE, 10),
+    "cache_behavior_scanner": _capability(
+        "cache_behavior_scanner", TrafficClass.SAFE_ACTIVE, 10,
+        permissions=("test_identity_access",),
+    ),
     "xxe_scanner": _capability("xxe_scanner", TrafficClass.SAFE_ACTIVE, 20, permissions=("xml_parser_testing",)),
     "race_condition": _capability("race_condition", TrafficClass.DISRUPTIVE, 100, max_concurrency=1, permissions=("concurrency_testing",), idempotent=False),
     "command_injection": _capability("command_injection", TrafficClass.SAFE_ACTIVE, 50),

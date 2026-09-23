@@ -150,11 +150,13 @@ SEVERITY_ORDER = {
 ENABLED_MODULES: List[str] = [
     "sql_injection", "ssti", "crlf_injection", "command_injection", "xxe_scanner",
     "xss_scanner", "ssrf", "openapi_scanner", "graphql_scanner",
-    "auth_scanner", "oauth_oidc_scanner", "jwt_scanner", "rate_limit_scanner",
+    "auth_scanner", "oauth_oidc_scanner", "session_cookie_scanner",
+    "jwt_scanner", "rate_limit_scanner",
     "idor_scanner", "bola_scanner", "mass_assignment_scanner",
     "broken_access_control", "csrf_scanner", "race_condition",
     "path_traversal", "lfi_rfi_scanner",
-    "misconfig_scanner", "header_security", "cors_scanner", "sensitive_data_exposure", "host_header",
+    "misconfig_scanner", "header_security", "cors_scanner", "sensitive_data_exposure",
+    "host_header", "cache_behavior_scanner",
     "open_redirect", "subdomain_takeover", "ssl_tls_scanner",
 ]
 
