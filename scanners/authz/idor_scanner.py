@@ -133,6 +133,7 @@ class IDORScanner(BaseScanner):
             return None
         baseline_len = len(baseline_resp.text)
         baseline_status = baseline_resp.status_code
+        baseline_body = baseline_resp.text.strip()
 
         # Analyze responses for IDOR indicators
         valid_responses = {}
@@ -140,7 +141,7 @@ class IDORScanner(BaseScanner):
             is_valid = (
                 resp.status_code == 200
                 and len(resp.text) > baseline_len * 0.5
-                and len(resp.text) > 100
+                and resp.text.strip() != baseline_body
             )
             # Different content for different IDs (not just the same page)
             if is_valid:
