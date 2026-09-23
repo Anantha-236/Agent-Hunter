@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio, logging
 from abc import ABC, abstractmethod
 from typing import List, Optional, TYPE_CHECKING
+from core.evidence import Redactor
 from core.models import Finding, ScanState
 from utils.http_client import HttpClient
 
@@ -32,6 +33,7 @@ class BaseScanner(ABC):
         self.payload_engine: Optional["AdaptivePayloadEngine"] = None
         self._tech_stack: str = ""
         self._waf_name: str = ""
+        self._redactor = getattr(client, "redactor", None) or Redactor()
 
     @abstractmethod
     async def run(self, state: ScanState) -> List[Finding]: ...
@@ -54,6 +56,15 @@ class BaseScanner(ABC):
         return await self.run(state)
 
     def make_finding(self, **kwargs) -> Finding:
+        for key in ("request", "response", "evidence", "payload", "ai_analysis"):
+            if key in kwargs and isinstance(kwargs[key], str):
+                kwargs[key] = self._redactor.redact_text(kwargs[key])
+        if "url" in kwargs and isinstance(kwargs["url"], str):
+            kwargs["url"] = self._redactor.redact_url(kwargs["url"])
+        if "poc_steps" in kwargs:
+            kwargs["poc_steps"] = self._redactor.redact(kwargs["poc_steps"])
+        if "extra" in kwargs:
+            kwargs["extra"] = self._redactor.redact(kwargs["extra"])
         f = Finding(**kwargs)
         f.module = self.name
         return f

@@ -8,6 +8,7 @@ from config.settings import (
     HTTP_TIMEOUT, HTTP_MAX_RETRIES, HTTP_CONCURRENCY,
     HTTP_DELAY_BETWEEN_REQUESTS, DEFAULT_HEADERS,
 )
+from core.evidence import EvidenceManifest, Redactor, ResponseFingerprint
 from core.models import Scope
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,9 @@ class HttpClient:
     def __init__(self, scope=None, headers=None, cookies=None, proxy=None,
                  verify_ssl=True, policy_enforcer=None, concurrency: Optional[int] = None,
                  timeout: Optional[int] = None, follow_redirects: bool = True,
-                 rate_limit: Optional[int] = None, user_agent: Optional[str] = None):
+                 rate_limit: Optional[int] = None, user_agent: Optional[str] = None,
+                 evidence_manifest: Optional[EvidenceManifest] = None,
+                 redactor: Optional[Redactor] = None):
         self._scope = scope
         self._policy_enforcer = policy_enforcer
         delay = HTTP_DELAY_BETWEEN_REQUESTS
@@ -56,6 +59,8 @@ class HttpClient:
         self._client = None
         self._no_redir_client = None
         self.request_log = []
+        self.redactor = redactor or Redactor()
+        self.evidence_manifest = evidence_manifest
 
     async def __aenter__(self):
         kwargs = dict(
@@ -93,14 +98,39 @@ class HttpClient:
         parsed = urlparse(url)
         path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
         raw = f"{method} {path} HTTP/1.1\r\nHost: {parsed.hostname}\r\n"
-        for k, v in headers.items():
+        safe_headers = self.redactor.redact(headers)
+        for k, v in safe_headers.items():
             raw += f"{k}: {v}\r\n"
-        if data:
-            raw += f"\r\n{data}"
-        elif json_body:
-            import json as _json
-            raw += f"\r\n{_json.dumps(json_body)}"
+        if data is not None or json_body is not None:
+            raw += "\r\n[REDACTED BODY]"
         return raw
+
+    def _capture_exchange(
+        self,
+        method: str,
+        url: str,
+        response: httpx.Response,
+        elapsed_seconds: float,
+    ) -> None:
+        if self.evidence_manifest is None:
+            return
+        fingerprint = ResponseFingerprint.from_values(
+            status_code=response.status_code,
+            headers=response.headers,
+            body=response.text,
+            elapsed_seconds=elapsed_seconds,
+        )
+        self.evidence_manifest.add(
+            kind="http_exchange",
+            value={
+                "request": {
+                    "method": method.upper(),
+                    "url": self.redactor.redact_url(url),
+                },
+                "response": fingerprint.to_dict(),
+            },
+            summary=f"{method.upper()} response {response.status_code}",
+        )
 
     async def request(self, method, url, params=None, headers=None, data=None,
                       json=None, content=None, extra_headers=None, retries=HTTP_MAX_RETRIES):
@@ -112,12 +142,16 @@ class HttpClient:
             try:
                 await self._rate_limiter.acquire()
                 async with self._semaphore:
+                    started = time.monotonic()
                     resp = await self._client.request(
                         method=method, url=url, params=params,
                         headers=merged, data=data, json=json,
                         content=content,
                     )
-                    self.request_log.append((method, url, resp.status_code))
+                    elapsed = time.monotonic() - started
+                    safe_url = self.redactor.redact_url(url)
+                    self.request_log.append((method, safe_url, resp.status_code))
+                    self._capture_exchange(method, url, resp, elapsed)
                     return resp, raw_req
             except ScopeViolationError:
                 raise
@@ -140,12 +174,16 @@ class HttpClient:
             try:
                 await self._rate_limiter.acquire()
                 async with self._semaphore:
+                    started = time.monotonic()
                     resp = await self._no_redir_client.request(
                         method=method, url=url, params=params,
                         headers=merged, data=data, json=json,
                         content=content,
                     )
-                    self.request_log.append((method, url, resp.status_code))
+                    elapsed = time.monotonic() - started
+                    safe_url = self.redactor.redact_url(url)
+                    self.request_log.append((method, safe_url, resp.status_code))
+                    self._capture_exchange(method, url, resp, elapsed)
                     return resp, raw_req
             except ScopeViolationError:
                 raise
