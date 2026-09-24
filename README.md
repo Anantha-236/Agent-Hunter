@@ -105,7 +105,14 @@ Other current platforms may work, but those combinations were not verified in th
 
 ## Quick start
 
-Clone this repository:
+The project is published through two synchronized GitHub repositories. Clone either location:
+
+```powershell
+git clone https://github.com/Anantha-236/Agent-Hunter.git
+Set-Location Agent-Hunter
+```
+
+or:
 
 ```powershell
 git clone https://github.com/Hunter-The-Pentester/Hunter-The-Pentester.git
