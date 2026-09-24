@@ -4,10 +4,11 @@ import {
   listScans,
   listModules,
   getSettings,
-  saveSettings,
   getActiveScan,
   getScan,
+  abortScan as apiAbortScan,
 } from "./api";
+import { buildScanRequest } from "./workflow";
 
 import TargetInput from "./components/TargetInput";
 import AssetDiscovery from "./components/AssetDiscovery";
@@ -75,6 +76,9 @@ export default function App() {
   const [selectedAssets, setSelectedAssets] = useState([]);
   const [availableModules, setAvailableModules] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [launchError, setLaunchError] = useState("");
+  const [launching, setLaunching] = useState(false);
+  const [scanActionError, setScanActionError] = useState("");
 
   /* ── Scan stream hook ── */
   const {
@@ -85,6 +89,7 @@ export default function App() {
     running,
     error: streamError,
     scanId,
+    stats,
     launch: launchStream,
     resume: resumeStream,
     reset: resetStream,
@@ -127,7 +132,7 @@ export default function App() {
           // Hydrate findings from the completed scan
           try {
             const scanData = await getScan(activeScan.scan_id);
-            if (scanData && Array.isArray(scanData.findings) && scanData.findings.length > 0) {
+            if (scanData && Array.isArray(scanData.findings)) {
               // Resume will hydrate all findings
               resumeStream(activeScan.scan_id);
               setScreen(SCREEN.REPORT);
@@ -171,27 +176,26 @@ export default function App() {
     setScreen(SCREEN.CONFIG);
   }, []);
 
-  const handleLaunchScan = useCallback(async ({ modules, depth, threads, assets }) => {
-    setScreen(SCREEN.LIVE);
+  const handleLaunchScan = useCallback(async ({ modules, depth, threads, assets, authorizationAcknowledged }) => {
+    setLaunchError("");
+    setLaunching(true);
     try {
-      const targetUrls = assets.map((a) => a.url).filter(Boolean);
-      const scopeHosts = [...new Set(assets.map((a) => a.host || a.hostname).filter(Boolean))];
-
-      const started = await apiStartScan({
-        url: targetUrls[0] || scanTarget,
+      const request = buildScanRequest({
+        target: scanTarget,
+        assets,
         modules,
         depth,
         threads,
-        in_scope: scopeHosts,
-        out_scope: [],
-        instructions: "",
-        selected_assets: targetUrls,
-        verify_ssl: !!settings.verifySsl,
+        verifySsl: settings.verifySsl,
+        authorizationAcknowledged,
       });
-
-      launchStream(started.scan_id, targetUrls[0] || scanTarget);
+      const started = await apiStartScan(request);
+      launchStream(started.scan_id, request.url);
+      setScreen(SCREEN.LIVE);
     } catch (err) {
-      console.error("Failed to start scan:", err);
+      setLaunchError(err?.message || "Unknown API error");
+    } finally {
+      setLaunching(false);
     }
   }, [scanTarget, settings.verifySsl, launchStream]);
 
@@ -206,15 +210,15 @@ export default function App() {
     setScreen(SCREEN.REPORT);
   }, []);
 
-  const handlePause = useCallback(() => {
-    // TODO: Wire to POST /api/scan/{id}/pause when backend supports it
-    console.log("Pause requested");
-  }, []);
-
-  const handleAbort = useCallback(() => {
-    // TODO: Wire to POST /api/scan/{id}/abort when backend supports it
-    console.log("Abort requested");
-  }, []);
+  const handleAbort = useCallback(async () => {
+    if (!scanId) return;
+    setScanActionError("");
+    try {
+      await apiAbortScan(scanId);
+    } catch (err) {
+      setScanActionError(err?.message || "Abort request failed");
+    }
+  }, [scanId]);
 
   // Show loading indicator while checking for active scans
   if (initializing) {
@@ -351,6 +355,8 @@ export default function App() {
             availableModules={availableModules}
             onLaunch={handleLaunchScan}
             onBack={() => setScreen(SCREEN.ASSETS)}
+            launchError={launchError}
+            launching={launching}
           />
         )}
         {screen === SCREEN.LIVE && (
@@ -362,9 +368,9 @@ export default function App() {
             findings={findings}
             scanTarget={scanTarget}
             scanId={scanId}
-            onPause={handlePause}
             onAbort={handleAbort}
             onViewReport={handleViewReport}
+            actionError={scanActionError || streamError}
           />
         )}
         {screen === SCREEN.REPORT && (
@@ -372,9 +378,8 @@ export default function App() {
             findings={findings}
             scanTarget={scanTarget}
             scanId={scanId}
-            scanDuration=""
             scanDate={new Date().toLocaleDateString()}
-            scannerCount={availableModules.length}
+            scannerCount={stats.modules_run ?? 0}
             onNewScan={handleNewScan}
           />
         )}

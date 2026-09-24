@@ -924,8 +924,8 @@ class Orchestrator:
                         self._consequence_reports.append(consequence)
 
                         # Responsibility decision
-                        decision = self.responsibility.on_finding(f, consequence, state)
-                        state.log_thought(decision.to_thought())
+                        responsibility_decision = self.responsibility.on_finding(f, consequence, state)
+                        state.log_thought(responsibility_decision.to_thought())
                         state.log_thought(consequence.to_thought())
 
                         # Boost RL reward for high-consequence confirmed findings

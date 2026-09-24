@@ -13,8 +13,10 @@ import logging
 import os
 import uuid
 import hmac
+import hashlib
 from collections import OrderedDict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -24,6 +26,7 @@ from pydantic import BaseModel
 
 from config.settings import ENABLED_MODULES
 from core.models import Finding, Scope, Target
+from core.runtime_state import RuntimeStateStore
 from integrations.email.client import SmtpClient
 from integrations.email.config import EmailConfigError, EmailPolicyError, SmtpSettings
 from integrations.email.outbox import AttachmentRejected, EmailOutbox
@@ -44,8 +47,62 @@ MAX_SCANS = 50
 _scans: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _recons: Dict[str, Dict[str, Any]] = {}
 _report_files: Dict[str, str] = {}
+_scan_tasks: Dict[str, asyncio.Task] = {}
 REPORT_DIR = os.path.join(os.path.dirname(__file__), "reports")
 os.makedirs(REPORT_DIR, exist_ok=True)
+RUNTIME_DIR = Path(REPORT_DIR) / "runtime"
+_runtime_state = RuntimeStateStore(RUNTIME_DIR)
+
+
+def _discover_report_files(report_dir: str | Path) -> Dict[str, str]:
+    """Rebuild the report registry from valid saved report JSON files."""
+    discovered: Dict[str, str] = {}
+    for path in sorted(Path(report_dir).glob("agent-hunter-report-*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        scan_id = str(payload.get("scan_id") or "").strip()
+        if scan_id:
+            discovered[scan_id] = str(path)
+    return discovered
+
+
+def _persist_runtime(kind: str, record_id: str, entry: Dict[str, Any]) -> None:
+    try:
+        _runtime_state.write(kind, record_id, entry)
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("Failed to persist %s %s: %s", kind, record_id, exc)
+
+
+def _restore_runtime_records() -> None:
+    restored_scans = _runtime_state.read_all("scans")
+    for scan_id, entry in restored_scans.items():
+        if entry.get("status") in {"starting", "running", "paused", "aborting"}:
+            entry["status"] = "interrupted"
+            entry["phase"] = "interrupted"
+            entry["ended_at"] = datetime.utcnow().isoformat()
+            entry.setdefault("errors", []).append(
+                "Backend restarted before the scan reached a terminal state. Review the checkpoint before starting a new scan."
+            )
+            _persist_runtime("scans", scan_id, entry)
+        _scans[scan_id] = entry
+
+    restored_recons = _runtime_state.read_all("recons")
+    for recon_id, entry in restored_recons.items():
+        if entry.get("status") == "running":
+            entry["status"] = "interrupted"
+            entry["ended_at"] = datetime.utcnow().isoformat()
+            entry.setdefault("errors", []).append(
+                "Backend restarted before reconnaissance completed. Start a new reconnaissance run."
+            )
+            _persist_runtime("recons", recon_id, entry)
+        _recons[recon_id] = entry
+
+    _report_files.update(_discover_report_files(REPORT_DIR))
+
+
+_restore_runtime_records()
 
 
 # ── Cyber Kill Chain Mapping ────────────────────────────────────
@@ -237,6 +294,9 @@ def _build_kill_chain_report(scan_entry: Dict[str, Any]) -> Dict[str, Any]:
         "kill_chain_stages": stages,
         "attack_paths": attack_paths,
         "raw_findings": findings,
+        "execution_stats": scan_entry.get("stats", {}),
+        "requested_modules": scan_entry.get("policy_snapshot", {}).get("modules", []),
+        "errors": scan_entry.get("errors", []),
     }
 
 
@@ -360,6 +420,7 @@ def _save_report_to_disk(scan_id: str, report: Dict[str, Any]) -> Optional[str]:
 def _register_scan(scan_id: str, entry: Dict[str, Any]) -> None:
     """Store a scan entry, evicting the oldest when at capacity."""
     _scans[scan_id] = entry
+    _persist_runtime("scans", scan_id, entry)
     while len(_scans) > MAX_SCANS:
         _scans.popitem(last=False)
 
@@ -421,6 +482,7 @@ class ScanRequest(BaseModel):
     instructions: str = ""
     selected_assets: Optional[List[str]] = None
     verify_ssl: bool = True
+    authorization_acknowledged: bool = False
 
 class ScanSummary(BaseModel):
     scan_id: str
@@ -543,6 +605,24 @@ def _resolve_modules(requested_modules: Optional[List[str]]) -> List[str]:
     # Preserve order while removing duplicates.
     return list(dict.fromkeys(resolved))
 
+
+def _create_policy_snapshot(req: ScanRequest) -> tuple[Dict[str, Any], str]:
+    """Freeze the operator-reviewed scan boundary into a hashable local record."""
+    snapshot = {
+        "version": 1,
+        "reviewed_at": datetime.utcnow().isoformat(),
+        "authorization_acknowledged": bool(req.authorization_acknowledged),
+        "target": req.url,
+        "in_scope": sorted(set(req.in_scope or [])),
+        "out_scope": sorted(set(req.out_scope or [])),
+        "selected_assets": sorted(set(req.selected_assets or [])),
+        "modules": _resolve_modules(req.modules),
+        "depth": req.depth,
+        "threads": req.threads,
+    }
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return snapshot, hashlib.sha256(canonical).hexdigest()
+
 def _finding_to_dict(f: Finding) -> dict:
     return {
         "id": f.id,
@@ -570,6 +650,7 @@ async def _run_scan(scan_id: str, req: ScanRequest):
     """Background task: run the orchestrator and push events into the store."""
     entry = _scans[scan_id]
     entry["status"] = "running"
+    _persist_runtime("scans", scan_id, entry)
 
     # Lazy-import the scanner stack so API health endpoints still work if
     # heavy scanner dependencies are missing or misconfigured.
@@ -584,6 +665,7 @@ async def _run_scan(scan_id: str, req: ScanRequest):
             "ts": datetime.utcnow().strftime("%H:%M:%S"),
             "msg": f"Failed to start scan engine: {exc}",
         })
+        _persist_runtime("scans", scan_id, entry)
         return
 
     runtime_settings = _runtime_settings({"verify_ssl": req.verify_ssl})
@@ -609,12 +691,15 @@ async def _run_scan(scan_id: str, req: ScanRequest):
             "ts": datetime.utcnow().strftime("%H:%M:%S"),
             "msg": thought,
         })
+        _persist_runtime("scans", scan_id, entry)
 
     def _on_phase(phase: str) -> None:
         entry["phase"] = phase
+        _persist_runtime("scans", scan_id, entry)
 
     def _on_finding(finding) -> None:
         entry["findings"].append(_finding_to_dict(finding))
+        _persist_runtime("scans", scan_id, entry)
 
     try:
         async with Orchestrator(
@@ -628,6 +713,7 @@ async def _run_scan(scan_id: str, req: ScanRequest):
             crawl_depth=crawl_depth,
             http_concurrency=max_threads,
             http_settings=runtime_settings,
+            policy_snapshot_hash=entry["policy_snapshot_hash"],
         ) as orch:
             state = await orch.run(
                 thought_callback=_on_thought,
@@ -647,6 +733,7 @@ async def _run_scan(scan_id: str, req: ScanRequest):
             else:
                 entry["status"] = "error"
             entry["ended_at"] = datetime.utcnow().isoformat()
+            _persist_runtime("scans", scan_id, entry)
 
             # Auto-save kill chain report on completion
             if entry["status"] == "complete":
@@ -656,11 +743,22 @@ async def _run_scan(scan_id: str, req: ScanRequest):
                 except Exception as report_exc:
                     logger.warning(f"Report auto-save failed: {report_exc}")
 
+    except asyncio.CancelledError:
+        entry["status"] = "aborted"
+        entry["phase"] = "aborted"
+        entry["ended_at"] = datetime.utcnow().isoformat()
+        entry["logs"].append({
+            "ts": datetime.utcnow().strftime("%H:%M:%S"),
+            "msg": "Scan aborted by operator",
+        })
+        _persist_runtime("scans", scan_id, entry)
+        raise
     except Exception as exc:
         logger.exception("Scan %s failed", scan_id)
         entry["status"] = "error"
         entry["errors"].append(str(exc))
         entry["ended_at"] = datetime.utcnow().isoformat()
+        _persist_runtime("scans", scan_id, entry)
 
 
 # ── Endpoints ──────────────────────────────────────────────────
@@ -760,7 +858,13 @@ async def email_saved_report(
 @app.post("/api/scan", response_model=ScanSummary, status_code=201)
 async def start_scan(req: ScanRequest):
     """Launch a new scan. Returns immediately with a scan_id."""
+    if not req.authorization_acknowledged:
+        raise HTTPException(
+            400,
+            "Explicit authorization acknowledgement is required before a scan can start.",
+        )
     scan_id = str(uuid.uuid4())
+    policy_snapshot, policy_snapshot_hash = _create_policy_snapshot(req)
     entry = {
         "scan_id": scan_id,
         "status": "starting",
@@ -772,9 +876,14 @@ async def start_scan(req: ScanRequest):
         "errors": [],
         "phase": "init",
         "stats": {},
+        "policy_snapshot": policy_snapshot,
+        "policy_snapshot_hash": policy_snapshot_hash,
     }
     _register_scan(scan_id, entry)
-    asyncio.create_task(_run_scan(scan_id, req))
+    task = asyncio.create_task(_run_scan(scan_id, req))
+    _scan_tasks[scan_id] = task
+    if hasattr(task, "add_done_callback"):
+        task.add_done_callback(lambda _task, sid=scan_id: _scan_tasks.pop(sid, None))
     return ScanSummary(
         scan_id=scan_id,
         status="starting",
@@ -838,7 +947,7 @@ async def stream_scan(scan_id: str):
                 last_status = entry["status"]
                 yield f"event: status\ndata: {json.dumps({'status': last_status})}\n\n"
 
-                if last_status in ("complete", "error", "aborted"):
+                if last_status in ("complete", "error", "aborted", "interrupted"):
                     yield f"event: stats\ndata: {json.dumps(entry.get('stats', {}))}\n\n"
                     if entry["errors"]:
                         yield f"event: scan_error\ndata: {json.dumps({'errors': entry['errors']})}\n\n"
@@ -929,15 +1038,22 @@ async def abort_scan(scan_id: str):
     if scan_id not in _scans:
         raise HTTPException(404, "Scan not found")
     entry = _scans[scan_id]
-    if entry["status"] in ("complete", "aborted", "error"):
+    if entry["status"] in ("complete", "aborted", "error", "interrupted"):
         raise HTTPException(400, f"Scan already in terminal state: {entry['status']}")
-    entry["status"] = "aborted"
-    entry["ended_at"] = datetime.utcnow().isoformat()
+    task = _scan_tasks.get(scan_id)
+    if task is not None and not task.done():
+        task.cancel()
+        entry["status"] = "aborting"
+    else:
+        entry["status"] = "aborted"
+        entry["phase"] = "aborted"
+        entry["ended_at"] = datetime.utcnow().isoformat()
     entry["logs"].append({
         "ts": datetime.utcnow().strftime("%H:%M:%S"),
-        "msg": "Scan aborted by user",
+        "msg": "Scan abort requested by operator",
     })
-    return {"status": "aborted"}
+    _persist_runtime("scans", scan_id, entry)
+    return {"status": entry["status"]}
 
 
 @app.get("/api/scans")
@@ -1005,15 +1121,18 @@ async def _run_recon(recon_id: str, req: ReconRequest):
                 tech = data.get("tech", "")
                 if tech and tech not in entry["technologies"]:
                     entry["technologies"].append(tech)
+            _persist_runtime("recons", recon_id, entry)
 
         await discovery.discover(req.url, on_event=on_event)
         entry["status"] = "complete"
         entry["ended_at"] = datetime.utcnow().isoformat()
+        _persist_runtime("recons", recon_id, entry)
     except Exception as exc:
         logger.exception("Recon %s failed", recon_id)
         entry["status"] = "error"
         entry["errors"].append(str(exc))
         entry["ended_at"] = datetime.utcnow().isoformat()
+        _persist_runtime("recons", recon_id, entry)
 
 
 @app.post("/api/recon", status_code=201)
@@ -1035,6 +1154,7 @@ async def start_recon(req: ReconRequest):
         "logs": [],
         "errors": [],
     }
+    _persist_runtime("recons", recon_id, _recons[recon_id])
     asyncio.create_task(_run_recon(recon_id, req))
     return {"recon_id": recon_id, "status": "running"}
 

@@ -79,6 +79,11 @@ export function getScanReport(scanId) {
   return request(`/scan/${scanId}/report`);
 }
 
+/** Cancel a running scan on the backend. */
+export function abortScan(scanId) {
+  return request(`/scan/${scanId}/abort`, { method: "POST" });
+}
+
 // ── Asset Discovery (Recon) ──────────────────────────────────
 
 /** Start asset discovery for a target. Returns { recon_id, status }. */

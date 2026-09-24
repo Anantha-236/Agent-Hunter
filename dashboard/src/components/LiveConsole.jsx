@@ -56,26 +56,21 @@ export default function LiveConsole({
   findings,
   scanTarget,
   scanId,
-  onPause,
   onAbort,
   onViewReport,
+  actionError,
 }) {
-  const [paused, setPaused] = useState(false);
   const [confirmAbort, setConfirmAbort] = useState(false);
 
   const currentIdx = getKillChainIndex(phase, progress);
-  const isComplete = phase === "complete" || progress === 100;
+  const terminal = ["complete", "error", "aborted", "interrupted"].includes(phase);
+  const isComplete = phase === "complete";
 
   const sevCounts = {
     critical: findings.filter((f) => (f.severity || f.sev) === "CRITICAL").length,
     high: findings.filter((f) => (f.severity || f.sev) === "HIGH").length,
     medium: findings.filter((f) => (f.severity || f.sev) === "MEDIUM").length,
     info: findings.filter((f) => ["LOW", "INFO"].includes((f.severity || f.sev))).length,
-  };
-
-  const handlePause = () => {
-    setPaused(!paused);
-    onPause?.();
   };
 
   const handleAbort = () => {
@@ -134,8 +129,6 @@ export default function LiveConsole({
                 {KILL_CHAIN_PHASES.map((kc, i) => {
                   const isDone = i < currentIdx;
                   const isActive = i === currentIdx && running;
-                  const isFuture = i > currentIdx;
-
                   return (
                     <div key={kc.key} style={{ display: "flex", alignItems: "center", flex: i < KILL_CHAIN_PHASES.length - 1 ? 1 : 0 }}>
                       {/* Node */}
@@ -227,13 +220,9 @@ export default function LiveConsole({
                 alignItems: "center",
                 justifyContent: "space-between",
               }}>
-                <button
-                  className={`btn btn-outline btn-sm`}
-                  onClick={handlePause}
-                  style={paused ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" } : {}}
-                >
-                  {paused ? "▶ Resume" : "⏸ Pause"}
-                </button>
+                <span style={{ color: "var(--color-text-low)", fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }}>
+                  Pause is unavailable; abort cancels the active task.
+                </span>
                 <button
                   className="btn btn-danger btn-sm"
                   onClick={handleAbort}
@@ -246,24 +235,30 @@ export default function LiveConsole({
             {/* Terminal */}
             <Terminal lines={logs} maxLines={2000} />
 
+            {actionError && (
+              <div role="alert" style={{ color: "var(--color-critical)", fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", whiteSpace: "pre-wrap" }}>
+                {actionError}
+              </div>
+            )}
+
             {/* Scan complete message + CTA */}
-            {isComplete && (
+            {terminal && (
               <div className="anim-fade-in" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 <div style={{
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--text-sm)",
-                  color: "var(--color-primary)",
+                  color: isComplete ? "var(--color-primary)" : "var(--color-accent)",
                   textAlign: "center",
                   padding: "12px",
                 }}>
-                  Scan complete · {findings.length} findings · {duration}
+                  {isComplete ? "Scan complete" : `Scan ${phase}`} · {findings.length} findings · {duration}
                 </div>
                 <button
                   className="btn btn-primary"
                   onClick={onViewReport}
                   style={{ width: "100%" }}
                 >
-                  View Kill Chain Report →
+                  {isComplete ? "View Report →" : "View Partial Results →"}
                 </button>
               </div>
             )}

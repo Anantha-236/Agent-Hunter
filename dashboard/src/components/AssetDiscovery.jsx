@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { startRecon, streamRecon } from "../api";
+import { getRecon, startRecon, streamRecon } from "../api";
 import AssetCard from "./shared/AssetCard";
+import { buildReconRequest, normalizeReconAsset } from "../workflow";
 
 /**
  * AssetDiscovery — Screen 2: Show discovered assets, let user select.
@@ -12,12 +13,14 @@ import AssetCard from "./shared/AssetCard";
  */
 
 export default function AssetDiscovery({ target, onContinue, onBack }) {
+  const targetAsset = normalizeReconAsset({ type: "target", url: target }, target);
   const [status, setStatus] = useState("idle");
+  const [errorMessage, setErrorMessage] = useState("");
   const [subdomains, setSubdomains] = useState([]);
   const [ports, setPorts] = useState([]);
   const [services, setServices] = useState([]);
   const [technologies, setTechnologies] = useState([]);
-  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectedIds, setSelectedIds] = useState(() => new Set([targetAsset.id]));
   const sseRef = useRef(null);
 
   // Start discovery on mount
@@ -26,39 +29,56 @@ export default function AssetDiscovery({ target, onContinue, onBack }) {
     (async () => {
       setStatus("scanning");
       try {
-        const { recon_id } = await startRecon({ url: target });
+        const { recon_id } = await startRecon(buildReconRequest(target));
         const es = streamRecon(recon_id);
         sseRef.current = es;
 
         es.addEventListener("subdomain", (e) => {
           if (cancelled) return;
           const d = JSON.parse(e.data);
-          setSubdomains((p) => [...p, { ...d, type: "subdomain", id: `sub-${d.hostname}` }]);
+          setSubdomains((p) => [...p, normalizeReconAsset({ ...d, type: "subdomain" }, target)]);
         });
         es.addEventListener("port", (e) => {
           if (cancelled) return;
           const d = JSON.parse(e.data);
-          setPorts((p) => [...p, { ...d, type: "port", id: `port-${d.host}:${d.port}` }]);
+          setPorts((p) => [...p, normalizeReconAsset({ ...d, type: "port" }, target)]);
         });
         es.addEventListener("technology", (e) => {
           if (cancelled) return;
           const d = JSON.parse(e.data);
-          setTechnologies((p) => p.some((t) => t.tech === d.tech) ? p : [...p, { ...d, type: "tech", id: `tech-${d.tech}` }]);
+          setTechnologies((p) => p.some((t) => t.tech === d.tech) ? p : [...p, normalizeReconAsset({ ...d, type: "tech" }, target)]);
         });
         es.addEventListener("service", (e) => {
           if (cancelled) return;
           const d = JSON.parse(e.data);
-          setServices((p) => [...p, { ...d, type: "service", id: `svc-${d.name || d.service}` }]);
+          setServices((p) => [...p, normalizeReconAsset({ ...d, type: "service" }, target)]);
         });
-        es.addEventListener("done", () => {
-          if (!cancelled) setStatus("complete");
+        es.addEventListener("done", async (e) => {
+          const done = JSON.parse(e.data);
+          if (!cancelled && done.status === "complete") {
+            setStatus("complete");
+          } else if (!cancelled) {
+            setStatus("error");
+            try {
+              const snapshot = await getRecon(recon_id);
+              setErrorMessage((snapshot.errors || []).join("; ") || `Reconnaissance ended with status: ${done.status}`);
+            } catch {
+              setErrorMessage(`Reconnaissance ended with status: ${done.status}`);
+            }
+          }
           es.close();
         });
         es.onerror = () => {
-          if (!cancelled) setStatus("error");
+          if (!cancelled) {
+            setStatus("error");
+            setErrorMessage("Reconnaissance stream disconnected. The backend may have stopped.");
+          }
         };
       } catch (err) {
-        if (!cancelled) setStatus("error");
+        if (!cancelled) {
+          setStatus("error");
+          setErrorMessage(err?.message || "Unable to start reconnaissance");
+        }
       }
     })();
 
@@ -69,15 +89,12 @@ export default function AssetDiscovery({ target, onContinue, onBack }) {
   }, [target]);
 
   // Build combined asset list
-  const allAssets = [...subdomains, ...ports, ...services, ...technologies];
-  const totalByGroup = {
-    subdomains: subdomains.length,
-    ports: ports.length,
-    services: services.length,
-    technologies: technologies.length,
-  };
-
+  const allAssets = [...new Map(
+    [targetAsset, ...subdomains, ...ports, ...services, ...technologies]
+      .map((asset) => [asset.url || asset.id, asset]),
+  ).values()];
   const toggleAsset = (id) => {
+    if (!allAssets.some((asset) => asset.id === id && asset.selectable)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -85,22 +102,13 @@ export default function AssetDiscovery({ target, onContinue, onBack }) {
     });
   };
 
-  const selectAll = () => setSelectedIds(new Set(allAssets.map((a) => a.id)));
-  const selectNone = () => setSelectedIds(new Set());
-
-  // Auto-select all when complete
-  useEffect(() => {
-    if (status === "complete" && selectedIds.size === 0 && allAssets.length > 0) {
-      selectAll();
-    }
-  }, [status]);
-
   const handleContinue = () => {
     const selected = allAssets.filter((a) => selectedIds.has(a.id));
     onContinue(selected);
   };
 
   const assetSections = [
+    { key: "targets", label: "Exact Target", items: [targetAsset] },
     { key: "subdomains", label: "Subdomains", items: subdomains },
     { key: "ports", label: "Open Ports", items: ports },
     { key: "services", label: "Services", items: services },
@@ -185,7 +193,7 @@ export default function AssetDiscovery({ target, onContinue, onBack }) {
                   <button
                     className="btn btn-outline btn-sm"
                     onClick={() => {
-                      const ids = section.items.map((a) => a.id);
+                      const ids = section.items.filter((a) => a.selectable).map((a) => a.id);
                       setSelectedIds((prev) => {
                         const next = new Set(prev);
                         ids.forEach((id) => next.add(id));
@@ -223,6 +231,7 @@ export default function AssetDiscovery({ target, onContinue, onBack }) {
                     asset={asset}
                     selected={selectedIds.has(asset.id)}
                     onToggle={toggleAsset}
+                    disabled={!asset.selectable}
                   />
                 ))}
               </div>
@@ -238,6 +247,11 @@ export default function AssetDiscovery({ target, onContinue, onBack }) {
               fontSize: "var(--text-sm)",
             }}>
               No assets discovered. Try a different target.
+            </div>
+          )}
+          {status === "error" && errorMessage && (
+            <div className="error-panel" role="alert">
+              {errorMessage}
             </div>
           )}
         </div>

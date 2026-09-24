@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import ScannerTile from "./shared/ScannerTile";
+import { DEFAULT_SAFE_MODULES } from "../workflow";
 
 /**
  * ScanConfig — Screen 3: Choose scanners, see estimate, launch.
@@ -84,14 +85,12 @@ const CATEGORIES = [
 // Very rough time estimate per scanner (minutes)
 const TIME_PER_SCANNER = 2;
 
-export default function ScanConfig({ selectedAssets, availableModules, onLaunch, onBack }) {
-  const [enabledIds, setEnabledIds] = useState(new Set(availableModules));
+export default function ScanConfig({ selectedAssets, availableModules, onLaunch, onBack, launchError, launching }) {
+  const safeDefaults = (modules) => modules.filter((id) => DEFAULT_SAFE_MODULES.includes(id));
+  const [enabledIds, setEnabledIds] = useState(new Set(safeDefaults(availableModules)));
   const [depth, setDepth] = useState("medium");
   const [threads, setThreads] = useState(4);
-
-  useEffect(() => {
-    setEnabledIds(new Set(availableModules));
-  }, [availableModules]);
+  const [authorizationAcknowledged, setAuthorizationAcknowledged] = useState(false);
 
   const toggleScanner = (id) => {
     setEnabledIds((prev) => {
@@ -119,12 +118,13 @@ export default function ScanConfig({ selectedAssets, availableModules, onLaunch,
     : `${selectedAssets.slice(0, 3).map((a) => a.host || a.hostname || a.label || a.id).join(", ")}...and ${selectedAssets.length - 3} more`;
 
   const handleLaunch = () => {
-    if (enabledIds.size === 0) return;
+    if (enabledIds.size === 0 || !authorizationAcknowledged || launching) return;
     onLaunch({
       modules: [...enabledIds],
       depth,
       threads,
       assets: selectedAssets,
+      authorizationAcknowledged,
     });
   };
 
@@ -297,6 +297,17 @@ export default function ScanConfig({ selectedAssets, availableModules, onLaunch,
             </select>
           </div>
         </div>
+
+        <div style={{ marginTop: "24px", padding: "16px", border: "1px solid var(--color-border)", borderRadius: "8px", background: "var(--color-base)" }}>
+          <div style={{ color: "var(--color-text-mid)", fontSize: "var(--text-sm)", marginBottom: "12px" }}>
+            Safe baseline modules are selected by default. Enable intrusive scanners only when the current program brief explicitly permits their traffic and the selected asset is in scope.
+          </div>
+          <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", cursor: "pointer", color: "var(--color-text-high)", fontSize: "var(--text-sm)" }}>
+            <input type="checkbox" checked={authorizationAcknowledged} onChange={(event) => setAuthorizationAcknowledged(event.target.checked)} style={{ marginTop: "3px" }} />
+            <span>I reviewed the current official program scope and rules, and the selected assets and testing techniques are authorized.</span>
+          </label>
+          {launchError && <div role="alert" style={{ marginTop: "12px", color: "var(--color-critical)", fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", whiteSpace: "pre-wrap" }}>Scan could not start: {launchError}</div>}
+        </div>
       </div>
 
       {/* Bottom bar */}
@@ -310,10 +321,10 @@ export default function ScanConfig({ selectedAssets, availableModules, onLaunch,
         </span>
         <button
           className="btn btn-primary"
-          disabled={enabledIds.size === 0}
+          disabled={enabledIds.size === 0 || !authorizationAcknowledged || launching}
           onClick={handleLaunch}
         >
-          Launch Scan ⚡
+          {launching ? "Starting..." : "Launch Scan ⚡"}
         </button>
       </div>
     </div>

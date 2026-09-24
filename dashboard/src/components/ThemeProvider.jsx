@@ -48,12 +48,13 @@ const DEFAULT_CONFIG = {
 export default function ThemeProvider({ children }) {
   const [config, setConfig] = useLocalStorage("hunter_theme", DEFAULT_CONFIG);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
 
   // Detect reduced motion preference
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setPrefersReducedMotion(mq.matches);
     const handler = (e) => setPrefersReducedMotion(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);

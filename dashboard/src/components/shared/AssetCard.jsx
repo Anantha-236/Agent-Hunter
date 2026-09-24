@@ -15,13 +15,13 @@ const TYPE_ICONS = {
   default: "◈",
 };
 
-export default function AssetCard({ asset, selected, onToggle }) {
+export default function AssetCard({ asset, selected, onToggle, disabled = false }) {
   const icon = TYPE_ICONS[asset.type] || TYPE_ICONS.default;
 
   return (
     <div
       className={`asset-card anim-slide-up stagger-item`}
-      onClick={() => onToggle(asset.id)}
+      onClick={() => !disabled && onToggle(asset.id)}
       style={{
         background: selected ? "var(--color-primary-glow)" : "var(--color-base)",
         border: `1px solid ${selected ? "var(--color-primary)" : "var(--color-border)"}`,
@@ -30,7 +30,8 @@ export default function AssetCard({ asset, selected, onToggle }) {
         display: "flex",
         alignItems: "center",
         gap: "12px",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
         transition: "all 150ms ease",
       }}
     >
@@ -80,6 +81,16 @@ export default function AssetCard({ asset, selected, onToggle }) {
             marginTop: "2px",
           }}>
             {asset.service.toUpperCase()}{asset.port ? ` · :${asset.port}` : ""}{asset.ip ? ` · ${asset.ip}` : ""}
+          </div>
+        )}
+        {asset.selectionReason && (
+          <div style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "10px",
+            color: disabled ? "var(--color-accent)" : "var(--color-text-low)",
+            marginTop: "4px",
+          }}>
+            {asset.selectionReason}
           </div>
         )}
       </div>

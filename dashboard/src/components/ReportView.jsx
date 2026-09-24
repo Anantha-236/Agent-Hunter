@@ -97,13 +97,11 @@ export default function ReportView({
   findings,
   scanTarget,
   scanId,
-  scanDuration,
   scanDate,
   scannerCount,
   onNewScan,
 }) {
   const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("category");
   const [expandedStages, setExpandedStages] = useState(new Set());
   const [expandedCategories, setExpandedCategories] = useState(new Set());
@@ -111,7 +109,6 @@ export default function ReportView({
   // Fetch kill chain report from backend
   useEffect(() => {
     if (!scanId) {
-      setLoading(false);
       return;
     }
 
@@ -130,23 +127,10 @@ export default function ReportView({
       })
       .catch((err) => {
         console.warn("Failed to load kill chain report:", err);
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
       });
 
     return () => { mounted = false; };
   }, [scanId]);
-
-  // Auto-expand categories with findings
-  useEffect(() => {
-    const withFindings = new Set();
-    for (const cat of ASSESSMENT_CATEGORIES) {
-      const catFindings = findings.filter((f) => _mapFindingToCategory(f) === cat.id);
-      if (catFindings.length > 0) withFindings.add(cat.id);
-    }
-    setExpandedCategories(withFindings);
-  }, [findings]);
 
   const sevCounts = {
     Critical: findings.filter((f) => f.severity === "CRITICAL").length,
@@ -353,7 +337,7 @@ export default function ReportView({
           }}>
             {[
               { label: "Total Findings", value: findings.length, color: "var(--color-text-high)" },
-              { label: "Scanners Run", value: scannerCount || 25, color: "var(--color-primary)" },
+              { label: "Scanners Run", value: scannerCount ?? 0, color: "var(--color-primary)" },
               { label: "Categories Hit", value: `${categoriesWithFindings}/7`, color: "var(--color-accent, #e67e22)" },
               { label: "Kill Chain Coverage", value: `${execSummary.kill_chain_coverage ?? 0}%`, color: "var(--color-text-mid)" },
             ].map((item) => (

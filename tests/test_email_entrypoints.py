@@ -81,7 +81,7 @@ def test_normal_scan_api_has_no_email_side_effect(monkeypatch):
     monkeypatch.setattr(api_server.asyncio, "create_task", discard_background)
     response = TestClient(api_server.app).post(
         "/api/scan",
-        json={"url": "https://example.test", "modules": ["header_security"]},
+        json={"url": "https://example.test", "modules": ["header_security"], "authorization_acknowledged": True},
     )
     assert response.status_code == 201
 

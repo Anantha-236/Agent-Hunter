@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { streamScan, getScan } from "../api";
+import { phaseForTerminalStatus } from "../workflow";
 
 /**
  * useScanStream — SSE stream logic with auto-reconnect and persistence.
@@ -121,9 +122,11 @@ export default function useScanStream() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [scanId, setScanId] = useState(null);
+  const [stats, setStats] = useState({});
   const sseRef = useRef(null);
   const pollRef = useRef(null);
   const reconnectRef = useRef(null);
+  const connectSSERef = useRef(null);
   const retriesRef = useRef(0);
   const maxRetries = 8;
 
@@ -155,11 +158,13 @@ export default function useScanStream() {
       if (Array.isArray(snapshot.findings)) {
         setFindings(snapshot.findings.map(normalizeFinding));
       }
+      setStats(snapshot.stats || {});
       if (snapshot.phase) {
         setPhase(snapshot.phase);
         setProgress(PHASE_PROGRESS[snapshot.phase] ?? 0);
       }
-      if (["complete", "error", "aborted"].includes(snapshot.status)) {
+      if (["complete", "error", "aborted", "interrupted"].includes(snapshot.status)) {
+        setPhase(phaseForTerminalStatus(snapshot.status, snapshot.phase));
         if (snapshot.status === "complete") setProgress(100);
         setRunning(false);
         clearPersistedScan();
@@ -188,11 +193,13 @@ export default function useScanStream() {
         if (Array.isArray(snapshot.findings)) {
           setFindings(snapshot.findings.map(normalizeFinding));
         }
+        setStats(snapshot.stats || {});
         if (snapshot.phase) {
           setProgress(PHASE_PROGRESS[snapshot.phase] ?? 0);
           setPhase(snapshot.phase);
         }
-        if (["complete", "error", "aborted"].includes(snapshot.status)) {
+        if (["complete", "error", "aborted", "interrupted"].includes(snapshot.status)) {
+          setPhase(phaseForTerminalStatus(snapshot.status, snapshot.phase));
           if (snapshot.status === "complete") setProgress(100);
           setRunning(false);
           clearInterval(pollRef.current);
@@ -232,10 +239,17 @@ export default function useScanStream() {
       } catch { /* skip */ }
     });
 
+    es.addEventListener("stats", (ev) => {
+      try {
+        setStats(JSON.parse(ev.data));
+      } catch { /* skip malformed */ }
+    });
+
     es.addEventListener("status", (ev) => {
       try {
         const { status } = JSON.parse(ev.data);
-        if (["complete", "error", "aborted"].includes(status)) {
+        if (["complete", "error", "aborted", "interrupted"].includes(status)) {
+          setPhase(phaseForTerminalStatus(status, "init"));
           setRunning(false);
           clearPersistedScan();
         }
@@ -263,12 +277,17 @@ export default function useScanStream() {
     });
 
     es.addEventListener("done", async (ev) => {
+      let terminalStatus = "complete";
+      try {
+        terminalStatus = JSON.parse(ev.data).status || "complete";
+      } catch { /* use complete fallback */ }
       try {
         const finalScan = await getScan(sid);
         setFindings((finalScan.findings || []).map(normalizeFinding));
+        setStats(finalScan.stats || {});
       } catch { /* best effort */ }
-      setProgress(100);
-      setPhase("complete");
+      if (terminalStatus === "complete") setProgress(100);
+      setPhase(phaseForTerminalStatus(terminalStatus, "init"));
       setRunning(false);
       clearInterval(pollRef.current);
       es.close();
@@ -294,7 +313,7 @@ export default function useScanStream() {
         // Re-hydrate from backend before reconnecting SSE
         const stillRunning = await hydrateFromBackend(sid);
         if (stillRunning) {
-          connectSSE(sid);
+          connectSSERef.current?.(sid);
         }
       }, delay);
     };
@@ -305,6 +324,9 @@ export default function useScanStream() {
       setError(null);
     };
   }, [hydrateFromBackend]);
+  useEffect(() => {
+    connectSSERef.current = connectSSE;
+  }, [connectSSE]);
 
   /**
    * Launch a new scan stream (called after POST /api/scan).
@@ -320,6 +342,7 @@ export default function useScanStream() {
     setPhase("init");
     setLogs([]);
     setFindings([]);
+    setStats({});
     setError(null);
     setScanId(startedScanId);
     retriesRef.current = 0;
@@ -362,6 +385,7 @@ export default function useScanStream() {
     if (reconnectRef.current) clearTimeout(reconnectRef.current);
     setLogs([]);
     setFindings([]);
+    setStats({});
     setProgress(0);
     setPhase("init");
     setRunning(false);
@@ -378,6 +402,7 @@ export default function useScanStream() {
     running,
     error,
     scanId,
+    stats,
     launch,
     resume,
     reset,
